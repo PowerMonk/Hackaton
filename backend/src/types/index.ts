@@ -116,13 +116,16 @@ export interface VirtualVehicle {
   id: string;
   routeId: string;
   progress: number; // 0.0 to 1.0
-  speed: number; // km/h (smoothed)
-  heading: number; // degrees
+  speed: number; // km/h (current actual speed)
+  heading: number; // degrees (geodesic bearing)
   passengerCount: number;
   confidence: "Alta" | "Media" | "Baja";
   lastUpdateAt: Date;
   currentPosition: Coordinates;
   isSimulated: boolean;
+  // Extended simulation info
+  state?: "moving" | "paused" | "dwelling" | "stopped";
+  mode?: string; // Route mode: Combi, Micro, Camión, Bus
 }
 
 // ============================================================================

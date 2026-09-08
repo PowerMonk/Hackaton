@@ -34,6 +34,18 @@ const LOCATION_SAMPLE_INTERVAL_TICKS = 30;
 // Initial positions for vehicles (distributed along route)
 const VEHICLE_INITIAL_POSITIONS = [0.05, 0.30, 0.60, 0.85];
 
+// Speed ranges by route mode (km/h) - based on Morelia traffic conditions
+const SPEED_BY_MODE: Record<string, { min: number; max: number; avg: number }> = {
+  Combi: { min: 12, max: 35, avg: 22 },
+  Micro: { min: 10, max: 30, avg: 18 },
+  Camión: { min: 15, max: 40, avg: 25 },
+  Bus: { min: 15, max: 45, avg: 28 },
+  default: { min: 12, max: 35, avg: 20 },
+};
+
+// Stop proximity threshold (meters) for dwell simulation
+const STOP_PROXIMITY_M = 50;
+
 // Pre-calculated segment info for efficient position lookups
 interface SegmentInfo {
   startProgress: number;
@@ -42,15 +54,26 @@ interface SegmentInfo {
   points: [number, number][];
 }
 
+// Simulated stop with progress position
+interface SimulatedStop {
+  progress: number;
+  name: string;
+}
+
 interface SimulatedVehicle {
   id: string;
   routeId: string;
+  routeMode: string;
   progress: number;
   speed: number; // km/h
+  targetSpeed: number; // km/h - what speed we're trying to reach
   heading: number;
   passengers: SimulatedPassenger[];
   isPaused: boolean;
   pauseEndTime: number;
+  isDwelling: boolean; // stopped at a transit stop
+  dwellEndTime: number;
+  lastStopProgress: number; // to avoid dwelling at same stop twice
   lastUpdateMs: number;
 }
 
@@ -67,6 +90,8 @@ export class SimulationEngine {
   private routeLengths: Map<string, number> = new Map();
   // Pre-computed segment info for each route (avoids flattening errors)
   private routeSegments: Map<string, SegmentInfo[]> = new Map();
+  // Simulated stops per route (progress positions where vehicles dwell)
+  private routeStops: Map<string, SimulatedStop[]> = new Map();
 
   private running = false;
   private tickIntervalMs = 1000;
@@ -91,6 +116,7 @@ export class SimulationEngine {
     this.routeGeometries.clear();
     this.routeLengths.clear();
     this.routeSegments.clear();
+    this.routeStops.clear();
 
     for (const route of routes) {
       this.routes.set(route.id, route);
@@ -102,10 +128,38 @@ export class SimulationEngine {
         // Pre-compute segment info for proper position calculations
         const segmentInfos = this.computeSegmentInfo(route.geometry.coordinates, totalLength);
         this.routeSegments.set(route.id, segmentInfos);
+
+        // Generate simulated stops along the route
+        const stops = this.generateSimulatedStops(route, totalLength);
+        this.routeStops.set(route.id, stops);
       }
     }
 
     console.log(`Simulation: Loaded ${routes.length} routes`);
+  }
+
+  /** Generate simulated stops along a route based on typical stop spacing */
+  private generateSimulatedStops(route: Route, totalLengthM: number): SimulatedStop[] {
+    // Average stop spacing: 300-500m for urban transit in Morelia
+    const avgStopSpacing = 400; // meters
+    const numStops = Math.max(3, Math.floor(totalLengthM / avgStopSpacing));
+    const stops: SimulatedStop[] = [];
+
+    for (let i = 0; i < numStops; i++) {
+      // Distribute stops evenly with small jitter
+      const baseProgress = (i + 0.5) / numStops;
+      const jitter = this.rng.range(-0.02, 0.02);
+      const progress = Math.max(0.05, Math.min(0.95, baseProgress + jitter));
+
+      stops.push({
+        progress,
+        name: `Parada ${i + 1}`,
+      });
+    }
+
+    // Sort by progress
+    stops.sort((a, b) => a.progress - b.progress);
+    return stops;
   }
 
   /** Pre-compute segment boundaries and lengths for accurate position tracking */
@@ -161,6 +215,10 @@ export class SimulationEngine {
       const segments = this.routeSegments.get(routeId);
       if (!segments || segments.length === 0) continue;
 
+      // Get speed range for this route type
+      const mode = route.mode || "default";
+      const speedRange = SPEED_BY_MODE[mode] || SPEED_BY_MODE.default;
+
       // Create vehicles for this route (up to 4)
       const numVehicles = Math.min(this.config.vehiclesPerRoute, VEHICLE_INITIAL_POSITIONS.length);
 
@@ -175,8 +233,8 @@ export class SimulationEngine {
         // Validate that progress is within a valid segment
         const validProgress = this.snapToValidSegment(routeId, initialProgress);
 
-        // Initial speed: 15-30 km/h (urban Morelia)
-        const initialSpeed = this.rng.range(15, 30);
+        // Initial speed based on route mode
+        const initialSpeed = this.rng.range(speedRange.min, speedRange.max);
 
         // Create initial passengers (2-5 per vehicle)
         const passengerCount = this.rng.int(2, 5);
@@ -197,12 +255,17 @@ export class SimulationEngine {
         const vehicle: SimulatedVehicle = {
           id: vehicleId,
           routeId,
+          routeMode: mode,
           progress: validProgress,
           speed: initialSpeed,
+          targetSpeed: speedRange.avg,
           heading: 0,
           passengers,
           isPaused: false,
           pauseEndTime: 0,
+          isDwelling: false,
+          dwellEndTime: 0,
+          lastStopProgress: -1,
           lastUpdateMs: Date.now(),
         };
 
@@ -291,18 +354,30 @@ export class SimulationEngine {
       const position = this.getPositionAtProgress(vehicle.routeId, vehicle.progress);
       if (!position) continue;
 
+      // Determine state for external consumers
+      const state = vehicle.isDwelling
+        ? "dwelling"
+        : vehicle.isPaused
+          ? "paused"
+          : vehicle.speed < 2
+            ? "stopped"
+            : "moving";
+
       result.push({
         id: vehicle.id,
         routeId: vehicle.routeId,
         progress: vehicle.progress,
-        speed: vehicle.speed, // km/h
+        speed: vehicle.speed, // km/h - actual current speed
         heading: vehicle.heading,
         passengerCount: vehicle.passengers.length,
         confidence: this.calculateConfidence(vehicle),
         lastUpdateAt: new Date(vehicle.lastUpdateMs),
         currentPosition: position,
         isSimulated: true,
-      });
+        // Extended info
+        state,
+        mode: vehicle.routeMode,
+      } as VirtualVehicle);
     }
 
     return result;
@@ -311,6 +386,46 @@ export class SimulationEngine {
   /** Get vehicles for a specific route */
   getRouteVehicles(routeId: string): VirtualVehicle[] {
     return this.getVirtualVehicles().filter((v) => v.routeId === routeId);
+  }
+
+  /** Get simulation stats for monitoring */
+  getStats(): {
+    vehicleCount: number;
+    routeCount: number;
+    totalPassengers: number;
+    movingCount: number;
+    pausedCount: number;
+    dwellingCount: number;
+  } {
+    let totalPassengers = 0;
+    let movingCount = 0;
+    let pausedCount = 0;
+    let dwellingCount = 0;
+
+    for (const vehicle of this.vehicles.values()) {
+      totalPassengers += vehicle.passengers.length;
+      if (vehicle.isDwelling) {
+        dwellingCount++;
+      } else if (vehicle.isPaused || vehicle.speed < 2) {
+        pausedCount++;
+      } else {
+        movingCount++;
+      }
+    }
+
+    return {
+      vehicleCount: this.vehicles.size,
+      routeCount: this.routes.size,
+      totalPassengers,
+      movingCount,
+      pausedCount,
+      dwellingCount,
+    };
+  }
+
+  /** Get simulated stops for a route */
+  getRouteStops(routeId: string): SimulatedStop[] {
+    return this.routeStops.get(routeId) || [];
   }
 
   /** Calculate ETA between two progress points */
@@ -390,19 +505,46 @@ export class SimulationEngine {
 
   private updateVehicle(vehicle: SimulatedVehicle, deltaMs: number): void {
     const now = Date.now();
+    const speedRange = SPEED_BY_MODE[vehicle.routeMode] || SPEED_BY_MODE.default;
 
-    // Check if paused (speed = 0 while paused)
+    // Check if dwelling at a stop
+    if (vehicle.isDwelling) {
+      vehicle.speed = 0;
+      if (now < vehicle.dwellEndTime) {
+        // Still dwelling - handle passenger boarding/alighting
+        this.handleStopPassengers(vehicle);
+        vehicle.lastUpdateMs = now;
+        return;
+      }
+      // Dwell complete - resume
+      vehicle.isDwelling = false;
+      vehicle.speed = this.rng.range(speedRange.min * 0.5, speedRange.avg);
+    }
+
+    // Check if paused (traffic/semáforos)
     if (vehicle.isPaused) {
-      vehicle.speed = 0; // Report actual zero speed when paused
+      vehicle.speed = 0;
       if (now < vehicle.pauseEndTime) {
         vehicle.lastUpdateMs = now;
         return;
       }
       vehicle.isPaused = false;
-      vehicle.speed = this.rng.range(12, 25); // Resume with new speed
+      vehicle.speed = this.rng.range(speedRange.min, speedRange.avg);
     }
 
-    // Random traffic pause (simulate semáforos, tráfico)
+    // Check if near a stop (and should dwell)
+    const nearbyStop = this.findNearbyStop(vehicle);
+    if (nearbyStop && Math.abs(nearbyStop.progress - vehicle.lastStopProgress) > 0.05) {
+      // Start dwelling at this stop
+      vehicle.isDwelling = true;
+      vehicle.speed = 0;
+      vehicle.dwellEndTime = now + this.traffic.dwellTime(this.config.dwellTimeSeconds) * 1000;
+      vehicle.lastStopProgress = nearbyStop.progress;
+      vehicle.lastUpdateMs = now;
+      return;
+    }
+
+    // Random traffic pause (semáforos, tráfico)
     if (this.traffic.shouldPause(this.config.trafficPauseProbability)) {
       vehicle.isPaused = true;
       vehicle.speed = 0;
@@ -411,9 +553,12 @@ export class SimulationEngine {
       return;
     }
 
-    // Apply speed variation
+    // Gradually adjust speed toward target with variation
     const speedFactor = this.traffic.speedFactor();
-    vehicle.speed = Math.max(5, Math.min(45, vehicle.speed * speedFactor));
+    const targetSpeed = vehicle.targetSpeed * speedFactor;
+    // Smooth speed transition
+    vehicle.speed = vehicle.speed * 0.9 + targetSpeed * 0.1;
+    vehicle.speed = Math.max(speedRange.min * 0.5, Math.min(speedRange.max, vehicle.speed));
 
     // Calculate distance traveled
     const routeLength = this.routeLengths.get(vehicle.routeId);
@@ -428,7 +573,6 @@ export class SimulationEngine {
     // Check if we're crossing into a gap between segments
     const segments = this.routeSegments.get(vehicle.routeId);
     if (segments && segments.length > 1) {
-      // Find current and target segments
       const currentSeg = this.findSegmentForProgress(segments, vehicle.progress);
       const targetSeg = this.findSegmentForProgress(segments, newProgress);
 
@@ -445,19 +589,83 @@ export class SimulationEngine {
     // Route completion: loop back
     if (vehicle.progress >= 0.99) {
       vehicle.progress = 0.02;
-      vehicle.speed = this.rng.range(15, 30);
+      vehicle.speed = this.rng.range(speedRange.min, speedRange.avg);
+      vehicle.lastStopProgress = -1; // Reset stop tracking for new loop
     }
 
     // Ensure progress stays in valid range
     vehicle.progress = this.snapToValidSegment(vehicle.routeId, vehicle.progress);
 
-    // Update heading
-    vehicle.heading = this.calculateHeading(vehicle.routeId, vehicle.progress);
+    // Update heading using geodesic calculation
+    vehicle.heading = this.calculateGeodesicHeading(vehicle.routeId, vehicle.progress);
 
     // Update passengers
     this.updatePassengers(vehicle);
 
     vehicle.lastUpdateMs = now;
+  }
+
+  /** Find if vehicle is near a stop */
+  private findNearbyStop(vehicle: SimulatedVehicle): SimulatedStop | null {
+    const stops = this.routeStops.get(vehicle.routeId);
+    if (!stops) return null;
+
+    const routeLength = this.routeLengths.get(vehicle.routeId) || 10000;
+    const proximityProgress = STOP_PROXIMITY_M / routeLength;
+
+    for (const stop of stops) {
+      if (Math.abs(vehicle.progress - stop.progress) < proximityProgress) {
+        return stop;
+      }
+    }
+    return null;
+  }
+
+  /** Handle passenger boarding and alighting at a stop */
+  private handleStopPassengers(vehicle: SimulatedVehicle): void {
+    // Passengers alight
+    const alightingCount = vehicle.passengers.filter(
+      p => p.willExitAtProgress <= vehicle.progress + 0.05
+    ).length;
+    vehicle.passengers = vehicle.passengers.filter(
+      p => p.willExitAtProgress > vehicle.progress + 0.05
+    );
+
+    // New passengers board
+    if (vehicle.passengers.length < 12) {
+      const boardingCount = this.passengerGen.boardingCount(2);
+      for (let i = 0; i < boardingCount && vehicle.passengers.length < 12; i++) {
+        vehicle.passengers.push({
+          id: `${vehicle.id}-p${Date.now()}-${i}`,
+          sessionId: `session-${vehicle.id}-${Date.now()}-${i}`,
+          routeId: vehicle.routeId,
+          progress: vehicle.progress,
+          speed: 0,
+          boardedAt: new Date(),
+          willExitAtProgress: this.passengerGen.generateExitProgress(vehicle.progress),
+        });
+      }
+    }
+  }
+
+  /** Calculate geodesic heading (bearing) between two points */
+  private calculateGeodesicHeading(routeId: string, progress: number): number {
+    const pos1 = this.getPositionAtProgress(routeId, progress);
+    const pos2 = this.getPositionAtProgress(routeId, Math.min(1, progress + 0.003));
+
+    if (!pos1 || !pos2) return 0;
+
+    // Convert to radians
+    const lat1 = (pos1.lat * Math.PI) / 180;
+    const lat2 = (pos2.lat * Math.PI) / 180;
+    const dLon = ((pos2.lon - pos1.lon) * Math.PI) / 180;
+
+    // Calculate bearing using spherical formula
+    const x = Math.sin(dLon) * Math.cos(lat2);
+    const y = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLon);
+
+    let heading = (Math.atan2(x, y) * 180) / Math.PI;
+    return ((heading % 360) + 360) % 360;
   }
 
   /** Find which segment contains a given progress value */
@@ -471,19 +679,22 @@ export class SimulationEngine {
   }
 
   private updatePassengers(vehicle: SimulatedVehicle): void {
-    // Remove passengers who reached their exit
-    vehicle.passengers = vehicle.passengers.filter(
-      (p) => vehicle.progress < p.willExitAtProgress
-    );
+    // Remove passengers who reached their exit (when not dwelling)
+    if (!vehicle.isDwelling) {
+      vehicle.passengers = vehicle.passengers.filter(
+        (p) => vehicle.progress < p.willExitAtProgress
+      );
+    }
 
-    // Update remaining passengers
+    // Update remaining passengers' progress and speed
     for (const passenger of vehicle.passengers) {
       passenger.progress = vehicle.progress;
       passenger.speed = vehicle.speed;
     }
 
-    // Occasionally add new passengers
-    if (this.passengerGen.shouldBoard(0.08) && vehicle.passengers.length < 8) {
+    // Note: Main boarding/alighting happens in handleStopPassengers() during dwell
+    // This only handles rare mid-route boarding (flag stop behavior)
+    if (!vehicle.isDwelling && !vehicle.isPaused && this.passengerGen.shouldBoard(0.02) && vehicle.passengers.length < 10) {
       vehicle.passengers.push({
         id: `${vehicle.id}-p${Date.now()}`,
         sessionId: `session-${vehicle.id}-${Date.now()}`,
@@ -605,25 +816,22 @@ export class SimulationEngine {
     return { lon: lastPt[0], lat: lastPt[1] };
   }
 
-  private calculateHeading(routeId: string, progress: number): number {
-    const pos1 = this.getPositionAtProgress(routeId, progress);
-    const pos2 = this.getPositionAtProgress(routeId, Math.min(1, progress + 0.005));
-
-    if (!pos1 || !pos2) return 0;
-
-    const dLon = pos2.lon - pos1.lon;
-    const dLat = pos2.lat - pos1.lat;
-
-    const heading = (Math.atan2(dLon, dLat) * 180) / Math.PI;
-    return (heading + 360) % 360;
-  }
+  // Removed: calculateHeading - replaced by calculateGeodesicHeading
 
   private calculateConfidence(vehicle: SimulatedVehicle): "Alta" | "Media" | "Baja" {
     const ageMs = Date.now() - vehicle.lastUpdateMs;
     const passengerCount = vehicle.passengers.length;
 
+    // High confidence: recent update, multiple passengers, vehicle is moving or dwelling
     if (ageMs < 10000 && passengerCount >= 2) return "Alta";
+
+    // Medium confidence: reasonably recent, has passengers
     if (ageMs < 30000 && passengerCount >= 1) return "Media";
+
+    // High confidence for dwelling vehicles (we know exactly where they are)
+    if (vehicle.isDwelling && passengerCount >= 1) return "Alta";
+
+    // Low confidence otherwise
     return "Baja";
   }
 

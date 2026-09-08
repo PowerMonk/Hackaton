@@ -84,6 +84,10 @@ export async function handleRequest(
     // Health check
     // ========================================================================
     if (path === "/health" && method === "GET") {
+      const simStats = serverState.simulationRunning
+        ? getSimulation().getStats()
+        : null;
+
       return json({
         status: serverState.dbConnected && serverState.schemaReady ? "healthy" : "degraded",
         mode: process.env.MOBILITY_MODE || "demo",
@@ -95,9 +99,20 @@ export async function handleRequest(
         },
         simulation: {
           running: serverState.simulationRunning,
+          ...(simStats && {
+            vehicleCount: simStats.vehicleCount,
+            totalPassengers: simStats.totalPassengers,
+            movingCount: simStats.movingCount,
+            pausedCount: simStats.pausedCount,
+            dwellingCount: simStats.dwellingCount,
+          }),
         },
+        // Legacy fields for mobile app compatibility
+        running: serverState.simulationRunning,
+        vehicleCount: simStats?.vehicleCount ?? 0,
+        routeCount: simStats?.routeCount ?? serverState.routeCount,
         timestamp: new Date().toISOString(),
-        version: "0.2.0",
+        version: "0.2.1",
       });
     }
 
