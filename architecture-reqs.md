@@ -408,8 +408,8 @@ type RoutePlanRequest = {
     lat: number;
     lon: number;
   };
-  priority: 'fastest' | 'cheapest' | 'least_walking' | 'fewest_transfers';
-  modes: Array<'walk' | 'transit' | 'bicycle'>;
+  priority: "fastest" | "cheapest" | "least_walking" | "fewest_transfers";
+  modes: Array<"walk" | "transit" | "bicycle">;
 };
 ```
 
@@ -420,7 +420,7 @@ type StreetRoute = {
   distanceMeters: number;
   durationSeconds: number;
   geometry: GeoJSON.LineString;
-  provider: 'osrm' | 'geoapify' | 'google' | 'mock';
+  provider: "osrm" | "geoapify" | "google" | "mock";
   estimated: boolean;
 };
 ```
