@@ -40,10 +40,7 @@ class _AppShellState extends State<AppShell> {
     final pages = [
       MapScreen(onOpenService: _openService),
       const PlannerScreen(),
-      TripsScreen(
-        onOpenActiveTrip: () => _selectTab(0),
-        onOpenService: _openService,
-      ),
+      TripsScreen(onOpenActiveTrip: () => _selectTab(0)),
     ];
     return Scaffold(
       body: SafeArea(

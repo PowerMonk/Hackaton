@@ -56,11 +56,10 @@ class _MapScreenState extends State<MapScreen> {
   List<TransitRoute> get visibleRoutes {
     var list = switch (selectedFilter) {
       'Combis' => routes.where((route) => route.mode == 'Combi').toList(),
-      'Camiones' => routes
-          .where(
-            (route) => route.mode == 'Camión' || route.mode == 'Micro',
-          )
-          .toList(),
+      'Camiones' =>
+        routes
+            .where((route) => route.mode == 'Camión' || route.mode == 'Micro')
+            .toList(),
       _ => List<TransitRoute>.from(routes),
     };
     list = RoutesRepository.search(list, query);
@@ -103,6 +102,12 @@ class _MapScreenState extends State<MapScreen> {
         onService: widget.onOpenService,
       );
     }
+    if (routeFocused) {
+      return MapOverviewView(
+        route: routes.isNotEmpty ? routes.first : demoRoutes.first,
+        onBack: () => setState(() => routeFocused = false),
+      );
+    }
     return RouteSelectionView(
       selectedRoute: selectedRoute,
       selectedFilter: selectedFilter,
@@ -114,7 +119,7 @@ class _MapScreenState extends State<MapScreen> {
       onSelect: _selectRoute,
       onSelectFilter: (filter) => setState(() => selectedFilter = filter),
       onViewMap: () {
-        if (selectedRoute != null) setState(() => routeFocused = true);
+        setState(() => routeFocused = true);
       },
       onOpenActiveTrip: () {
         setState(() {
@@ -179,191 +184,337 @@ class RouteSelectionView extends StatelessWidget {
       builder: (context, constraints) {
         final isCompact = constraints.maxWidth < 360;
         final horizontal = isCompact ? 16.0 : 22.0;
-        final visibleRoutes = routes;
         final subtitle = isLoadingReal
             ? 'Sin destino obligatorio · cargando datos OSM…'
             : 'Sin destino obligatorio · $totalCount rutas · datos OSM';
         return Column(
           children: [
             Expanded(
-              child: SingleChildScrollView(
-                padding: EdgeInsets.fromLTRB(horizontal, 18, horizontal, 22),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Elige tu ruta',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: isCompact ? 27 : 32,
-                            fontWeight: FontWeight.w800,
-                            letterSpacing: -1,
-                          ),
-                        ),
-                        const SizedBox(height: 5),
-                        Text(
-                          subtitle,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: isCompact ? 15 : 17,
-                            color: AppColors.muted,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 22),
-                    TextField(
-                      onChanged: onQueryChanged,
-                      decoration: InputDecoration(
-                        hintText: 'Buscar por número, colonia o destino...',
-                        hintStyle: TextStyle(
-                          color: AppColors.muted,
-                          fontSize: isCompact ? 15 : 17,
-                        ),
-                        prefixIcon: Icon(
-                          Icons.search,
-                          color: AppColors.muted,
-                          size: isCompact ? 24 : 28,
-                        ),
-                        filled: true,
-                        fillColor: Colors.white,
-                        contentPadding: EdgeInsets.symmetric(
-                          vertical: isCompact ? 16 : 19,
-                          horizontal: 12,
-                        ),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(22),
-                          borderSide: const BorderSide(
-                            color: AppColors.line,
-                            width: 1.5,
-                          ),
-                        ),
-                        enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(22),
-                          borderSide: const BorderSide(
-                            color: AppColors.line,
-                            width: 1.5,
-                          ),
+              child: Stack(
+                children: [
+                  CustomScrollView(
+                    slivers: [
+                      SliverPersistentHeader(
+                        pinned: true,
+                        delegate: _RouteHeaderDelegate(
+                          subtitle: subtitle,
+                          compact: isCompact,
                         ),
                       ),
-                    ),
-                    const SizedBox(height: 16),
-                    SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: Row(
-                        children: [
-                          for (final filter in const [
-                            'Cerca de mí',
-                            'Combis',
-                            'Camiones',
-                          ])
-                            Padding(
-                              padding: const EdgeInsets.only(right: 10),
-                              child: _SelectableFilterChip(
-                                label: filter,
-                                selected: selectedFilter == filter,
-                                compact: isCompact,
-                                onTap: () => onSelectFilter(filter),
-                              ),
-                            ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    InkWell(
-                      onTap: onOpenActiveTrip,
-                      borderRadius: BorderRadius.circular(20),
-                      child: SoftCard(
-                        color: const Color(0xFFE1F4E8),
-                        borderColor: const Color(0xFF9ED5B6),
-                        padding: EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: isCompact ? 13 : 15,
-                        ),
-                        child: Row(
-                          children: [
-                            const Icon(
-                              Icons.directions_bus_filled,
-                              color: AppColors.green,
-                              size: 26,
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Text(
-                                selectedRoute != null
-                                    ? 'Hay una unidad simulada en ${selectedRoute!.id} · tócala para verla'
-                                    : (visibleRoutes.isNotEmpty
-                                          ? 'Hay unidades simuladas · elige una ruta para verla'
-                                          : 'Sin rutas para ese filtro · prueba otra búsqueda'),
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: AppColors.green,
-                                  fontSize: isCompact ? 15 : 16,
-                                  fontWeight: FontWeight.w800,
+                      SliverToBoxAdapter(
+                        child: Padding(
+                          padding: EdgeInsets.fromLTRB(
+                            horizontal,
+                            16,
+                            horizontal,
+                            10,
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              TextField(
+                                onChanged: onQueryChanged,
+                                decoration: InputDecoration(
+                                  hintText:
+                                      'Buscar por número, colonia o destino...',
+                                  hintStyle: TextStyle(
+                                    color: AppColors.muted,
+                                    fontSize: isCompact ? 15 : 17,
+                                  ),
+                                  prefixIcon: Icon(
+                                    Icons.search,
+                                    color: AppColors.muted,
+                                    size: isCompact ? 24 : 28,
+                                  ),
+                                  filled: true,
+                                  fillColor: Colors.white,
+                                  contentPadding: EdgeInsets.symmetric(
+                                    vertical: isCompact ? 16 : 19,
+                                    horizontal: 12,
+                                  ),
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(22),
+                                    borderSide: const BorderSide(
+                                      color: AppColors.line,
+                                      width: 1.5,
+                                    ),
+                                  ),
+                                  enabledBorder: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(22),
+                                    borderSide: const BorderSide(
+                                      color: AppColors.line,
+                                      width: 1.5,
+                                    ),
+                                  ),
                                 ),
                               ),
-                            ),
-                            const Icon(
-                              Icons.chevron_right,
-                              color: AppColors.green,
-                            ),
-                          ],
+                              const SizedBox(height: 16),
+                              SingleChildScrollView(
+                                scrollDirection: Axis.horizontal,
+                                child: Row(
+                                  children: [
+                                    for (final filter in const [
+                                      'Cerca de mí',
+                                      'Combis',
+                                      'Camiones',
+                                    ])
+                                      Padding(
+                                        padding: const EdgeInsets.only(
+                                          right: 10,
+                                        ),
+                                        child: _SelectableFilterChip(
+                                          label: filter,
+                                          selected: selectedFilter == filter,
+                                          compact: isCompact,
+                                          onTap: () => onSelectFilter(filter),
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(height: 16),
+                              InkWell(
+                                onTap: onOpenActiveTrip,
+                                borderRadius: BorderRadius.circular(20),
+                                child: SoftCard(
+                                  color: const Color(0xFFE1F4E8),
+                                  borderColor: const Color(0xFF9ED5B6),
+                                  padding: EdgeInsets.symmetric(
+                                    horizontal: 16,
+                                    vertical: isCompact ? 13 : 15,
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      const Icon(
+                                        Icons.directions_bus_filled,
+                                        color: AppColors.green,
+                                        size: 26,
+                                      ),
+                                      const SizedBox(width: 12),
+                                      Expanded(
+                                        child: Text(
+                                          selectedRoute != null
+                                              ? 'Hay una unidad simulada en ${selectedRoute!.id} · tócala para verla'
+                                              : (routes.isNotEmpty
+                                                    ? 'Hay unidades simuladas · elige una ruta para verla'
+                                                    : 'Sin rutas para ese filtro · prueba otra búsqueda'),
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                            color: AppColors.green,
+                                            fontSize: isCompact ? 15 : 16,
+                                            fontWeight: FontWeight.w800,
+                                          ),
+                                        ),
+                                      ),
+                                      const Icon(
+                                        Icons.chevron_right,
+                                        color: AppColors.green,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      SliverPadding(
+                        padding: EdgeInsets.fromLTRB(
+                          horizontal,
+                          0,
+                          horizontal,
+                          110,
+                        ),
+                        sliver: routes.isEmpty
+                            ? const SliverToBoxAdapter(
+                                child: Padding(
+                                  padding: EdgeInsets.symmetric(vertical: 30),
+                                  child: Center(
+                                    child: Text(
+                                      'No hay rutas para este filtro.',
+                                    ),
+                                  ),
+                                ),
+                              )
+                            : SliverList(
+                                delegate: SliverChildBuilderDelegate(
+                                  (context, index) => Padding(
+                                    padding: const EdgeInsets.only(bottom: 12),
+                                    child: SelectableRouteCard(
+                                      route: routes[index],
+                                      selected:
+                                          selectedRoute?.id == routes[index].id,
+                                      compact: isCompact,
+                                      onTap: () => onSelect(routes[index]),
+                                    ),
+                                  ),
+                                  childCount: routes.length,
+                                ),
+                              ),
+                      ),
+                    ],
+                  ),
+                  Positioned(
+                    right: horizontal,
+                    bottom: 16,
+                    child: SafeArea(
+                      top: false,
+                      child: Semantics(
+                        button: true,
+                        label: 'Ver en el mapa',
+                        child: FloatingActionButton(
+                          onPressed: onViewMap,
+                          tooltip: 'Ver en el mapa',
+                          backgroundColor: AppColors.terracotta,
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(18),
+                          ),
+                          child: const Icon(Icons.map_outlined),
                         ),
                       ),
                     ),
-                    const SizedBox(height: 16),
-                    ...visibleRoutes.map(
-                      (route) => Padding(
-                        padding: const EdgeInsets.only(bottom: 12),
-                        child: SelectableRouteCard(
-                          route: route,
-                          selected: selectedRoute?.id == route.id,
-                          compact: isCompact,
-                          onTap: () => onSelect(route),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            Container(
-              padding: EdgeInsets.fromLTRB(horizontal, 12, horizontal, 14),
-              decoration: const BoxDecoration(
-                color: AppColors.cream,
-                border: Border(top: BorderSide(color: AppColors.line)),
-              ),
-              child: SafeArea(
-                top: false,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    PrimaryButton(
-                      label: 'Ver en el mapa',
-                      onPressed: onViewMap,
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Puedes cambiar de ruta cuando quieras',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: AppColors.muted,
-                        fontSize: isCompact ? 13 : 14,
-                      ),
-                    ),
-                  ],
-                ),
+                  ),
+                ],
               ),
             ),
           ],
         );
       },
+    );
+  }
+}
+
+class _RouteHeaderDelegate extends SliverPersistentHeaderDelegate {
+  const _RouteHeaderDelegate({required this.subtitle, required this.compact});
+
+  final String subtitle;
+  final bool compact;
+
+  @override
+  double get minExtent => compact ? 52 : 62;
+
+  @override
+  double get maxExtent => compact ? 52 : 62;
+
+  @override
+  Widget build(
+    BuildContext context,
+    double shrinkOffset,
+    bool overlapsContent,
+  ) {
+    return Container(
+      color: AppColors.cream,
+      padding: EdgeInsets.fromLTRB(
+        compact ? 16 : 22,
+        compact ? 2 : 4,
+        compact ? 16 : 22,
+        compact ? 2 : 4,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Elige tu ruta',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: compact ? 20 : 24,
+              fontWeight: FontWeight.w800,
+              letterSpacing: -1,
+            ),
+          ),
+          const SizedBox(height: 1),
+          Text(
+            subtitle,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: compact ? 10 : 12,
+              color: AppColors.muted,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  bool shouldRebuild(covariant _RouteHeaderDelegate oldDelegate) =>
+      oldDelegate.subtitle != subtitle || oldDelegate.compact != compact;
+}
+
+class MapOverviewView extends StatelessWidget {
+  const MapOverviewView({required this.route, required this.onBack, super.key});
+
+  final TransitRoute route;
+  final VoidCallback onBack;
+
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+      child: Column(
+        children: [
+          SizedBox(
+            height: MediaQuery.sizeOf(context).height * 0.62,
+            child: Stack(
+              children: [
+                Positioned.fill(child: DemoMap(route: route, showRoute: false)),
+                Positioned(
+                  top: 22,
+                  left: 18,
+                  right: 18,
+                  child: SoftCard(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 14,
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.home_rounded, color: AppColors.ink),
+                        const SizedBox(width: 10),
+                        const Expanded(
+                          child: Text(
+                            'Mapa de Morelia',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                        IconButton(
+                          tooltip: 'Elegir ruta',
+                          onPressed: onBack,
+                          icon: const Icon(Icons.close),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(22),
+            child: SoftCard(
+              child: Row(
+                children: [
+                  const Icon(Icons.info_outline, color: AppColors.muted),
+                  const SizedBox(width: 12),
+                  const Expanded(
+                    child: Text(
+                      'Selecciona una ruta para ver su recorrido y las unidades disponibles.',
+                      style: TextStyle(color: AppColors.muted, height: 1.35),
+                    ),
+                  ),
+                  TextButton(onPressed: onBack, child: const Text('Rutas')),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -480,224 +631,179 @@ class FocusedRouteView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final screenHeight = MediaQuery.sizeOf(context).height;
     final compact = MediaQuery.sizeOf(context).width < 360;
-    final mapHeight = (screenHeight * 0.56).clamp(360.0, 560.0);
     final isReal = route.tieneGeometriaReal;
     final simEta = isReal
         ? DemoSimulation().etaFor(route.polyline!, 0.4).label
         : '4-6 min';
-    final vehicleTitle =
-        isReal ? 'Unidad simulada en recorrido' : 'Unidad a 350 m de ti';
-    final vehicleSubtitle = isReal
-        ? 'Sobre el trazo OSM · confianza media'
-        : 'Cerca de Villalongín · confianza alta';
-    return SingleChildScrollView(
-      child: Column(
+    return SizedBox.expand(
+      child: Stack(
         children: [
-          SizedBox(
-            height: mapHeight,
-            child: Stack(
-              children: [
-                Positioned.fill(
-                  child: DemoMap(route: route, height: mapHeight),
-                ),
-                Positioned(
-                  top: 26,
-                  left: 22,
-                  right: 22,
-                  child: SoftCard(
-                    color: AppColors.cream,
-                    borderColor: AppColors.terracotta,
-                    padding: const EdgeInsets.all(17),
-                    child: Row(
-                      children: [
-                        RouteBadge(route: route, compact: true),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                isReal
-                                    ? '${route.id} · ${route.name}'
-                                    : '${route.id} · Hacia Centro',
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontSize: compact ? 16 : 18,
-                                  fontWeight: FontWeight.w800,
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              StatusPill(
-                                label: isReal
-                                    ? 'Confianza media · estimado'
-                                    : 'Alta confianza',
-                                color: isReal
-                                    ? AppColors.amber
-                                    : AppColors.green,
-                              ),
-                            ],
-                          ),
-                        ),
-                        IconButton(
-                          onPressed: onBack,
-                          icon: const Icon(Icons.close, size: 30),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                Positioned(
-                  left: 16,
-                  right: 16,
-                  bottom: 16,
-                  child: InkWell(
-                    onTap: onBoarding,
-                    borderRadius: BorderRadius.circular(24),
-                    child: SoftCard(
-                      color: AppColors.ink,
-                      borderColor: AppColors.ink,
-                      child: Row(
-                        children: [
-                          Container(
-                            width: compact ? 46 : 55,
-                            height: compact ? 46 : 55,
-                            decoration: BoxDecoration(
-                              color: AppColors.greenBright,
-                              borderRadius: BorderRadius.circular(16),
-                            ),
-                            child: Icon(
-                              Icons.directions_bus,
-                              color: Colors.white,
-                              size: compact ? 24 : 29,
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  vehicleTitle,
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    color: Colors.white,
-                                    fontSize: compact ? 15 : 17,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  vehicleSubtitle,
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    color: Colors.white70,
-                                    fontSize: compact ? 12 : 14,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          Container(
-                            padding: EdgeInsets.symmetric(
-                              horizontal: compact ? 10 : 14,
-                              vertical: compact ? 9 : 12,
-                            ),
-                            decoration: BoxDecoration(
-                              color: AppColors.cream,
-                              borderRadius: BorderRadius.circular(14),
-                            ),
-                            child: Text(
-                              simEta,
-                              style: TextStyle(
-                                fontSize: compact ? 15 : 17,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ),
-                        ],
+          Positioned.fill(child: DemoMap(route: route)),
+          Positioned(
+            top: 16,
+            right: 16,
+            child: SoftCard(
+              padding: EdgeInsets.symmetric(
+                horizontal: compact ? 10 : 13,
+                vertical: compact ? 8 : 10,
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  RouteBadge(route: route, compact: true),
+                  const SizedBox(width: 9),
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 150),
+                    child: Text(
+                      isReal ? route.name : '${route.id} · Centro',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: compact ? 13 : 15,
+                        fontWeight: FontWeight.w800,
                       ),
                     ),
                   ),
-                ),
-              ],
+                  IconButton(
+                    visualDensity: VisualDensity.compact,
+                    onPressed: onBack,
+                    tooltip: 'Elegir otra ruta',
+                    icon: const Icon(Icons.close, size: 20),
+                  ),
+                ],
+              ),
             ),
           ),
-          Container(
-            padding: const EdgeInsets.fromLTRB(22, 24, 22, 30),
-            decoration: const BoxDecoration(
-              color: AppColors.cream,
-              borderRadius: BorderRadius.vertical(top: Radius.circular(32)),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Paradas en secuencia',
-                  style: TextStyle(fontSize: 25, fontWeight: FontWeight.w800),
+          Positioned(
+            top: compact ? 82 : 94,
+            left: 16,
+            child: Material(
+              color: AppColors.ink,
+              borderRadius: BorderRadius.circular(18),
+              child: InkWell(
+                onTap: onBoarding,
+                borderRadius: BorderRadius.circular(18),
+                child: Padding(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: compact ? 11 : 14,
+                    vertical: compact ? 9 : 11,
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        width: compact ? 32 : 38,
+                        height: compact ? 32 : 38,
+                        decoration: BoxDecoration(
+                          color: AppColors.greenBright,
+                          borderRadius: BorderRadius.circular(11),
+                        ),
+                        child: Icon(
+                          Icons.directions_bus,
+                          color: Colors.white,
+                          size: compact ? 18 : 21,
+                        ),
+                      ),
+                      const SizedBox(width: 9),
+                      Text(
+                        'Llegada estimada $simEta',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: compact ? 13 : 14,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-                if (isReal)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 6),
-                    child: Text(
-                      'Trazo OSM · ${route.polyline!.length} pts · estimado',
-                      style: const TextStyle(
-                        color: AppColors.muted,
-                        fontSize: 14,
+              ),
+            ),
+          ),
+          DraggableScrollableSheet(
+            initialChildSize: 0.20,
+            minChildSize: 0.16,
+            maxChildSize: 0.72,
+            snap: true,
+            snapSizes: const [0.20, 0.48, 0.72],
+            builder: (context, controller) {
+              return Material(
+                color: AppColors.cream,
+                elevation: 14,
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(28),
+                ),
+                clipBehavior: Clip.antiAlias,
+                child: ListView(
+                  controller: controller,
+                  padding: const EdgeInsets.fromLTRB(22, 10, 22, 30),
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 44,
+                        height: 5,
+                        decoration: BoxDecoration(
+                          color: AppColors.line,
+                          borderRadius: BorderRadius.circular(4),
+                        ),
                       ),
                     ),
-                  ),
-                const SizedBox(height: 18),
-                FutureBuilder<List<StopInfo>>(
-                  future: RoutesRepository.stopsFor(route),
-                  initialData: demoStops,
-                  builder: (context, snapshot) {
-                    final stops = snapshot.data ?? demoStops;
-                    return Column(
-                      children: [
-                        for (final stop in stops)
-                          StopTimelineItem(stop: stop),
-                      ],
-                    );
-                  },
-                ),
-                const SizedBox(height: 8),
-                OutlinedButton.icon(
-                  onPressed: onService,
-                  icon: const Icon(Icons.wifi_off),
-                  label: const Text('Ver estado del servicio'),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: AppColors.ink,
-                    minimumSize: const Size(double.infinity, 54),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(17),
-                    ),
-                    side: const BorderSide(color: AppColors.line),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                SizedBox(
-                  width: double.infinity,
-                  height: 54,
-                  child: OutlinedButton.icon(
-                    onPressed: onBack,
-                    icon: const Icon(Icons.map_outlined),
-                    label: const Text('Volver al mapa'),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: AppColors.ink,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(17),
+                    const SizedBox(height: 14),
+                    const Text(
+                      'Paradas en secuencia',
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w800,
                       ),
-                      side: const BorderSide(color: AppColors.line),
                     ),
-                  ),
+                    if (isReal)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Text(
+                          'Trazo OSM · estimado',
+                          style: const TextStyle(
+                            color: AppColors.muted,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ),
+                    const SizedBox(height: 12),
+                    if (route.paradasCount == 0)
+                      const _StopsUnavailableCard()
+                    else
+                      FutureBuilder<List<StopInfo>>(
+                        future: RoutesRepository.stopsFor(route),
+                        builder: (context, snapshot) {
+                          final stops = snapshot.data ?? const <StopInfo>[];
+                          if (stops.isEmpty) {
+                            return const _StopsUnavailableCard();
+                          }
+                          return Column(
+                            children: [
+                              for (final stop in stops)
+                                StopTimelineItem(stop: stop),
+                            ],
+                          );
+                        },
+                      ),
+                    const SizedBox(height: 12),
+                    OutlinedButton.icon(
+                      onPressed: onService,
+                      icon: const Icon(Icons.wifi_off, size: 18),
+                      label: const Text('Estado del servicio'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: AppColors.ink,
+                        minimumSize: const Size(double.infinity, 48),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(15),
+                        ),
+                        side: const BorderSide(color: AppColors.line),
+                      ),
+                    ),
+                  ],
                 ),
-              ],
-            ),
+              );
+            },
           ),
         ],
       ),
@@ -726,8 +832,8 @@ class StopTimelineItem extends StatelessWidget {
             child: Column(
               children: [
                 Container(
-                  width: 25,
-                  height: 25,
+                  width: 21,
+                  height: 21,
                   decoration: BoxDecoration(
                     color: passed
                         ? AppColors.greenBright
@@ -743,21 +849,21 @@ class StopTimelineItem extends StatelessWidget {
                     ),
                   ),
                 ),
-                Container(width: 2, height: 42, color: AppColors.line),
+                Container(width: 2, height: 30, color: AppColors.line),
               ],
             ),
           ),
           const SizedBox(width: 12),
           Expanded(
             child: Padding(
-              padding: const EdgeInsets.only(bottom: 18),
+              padding: const EdgeInsets.only(bottom: 12),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
                     stop.name,
                     style: TextStyle(
-                      fontSize: 18,
+                      fontSize: 15,
                       fontWeight: active ? FontWeight.w700 : FontWeight.w500,
                     ),
                   ),
@@ -765,7 +871,7 @@ class StopTimelineItem extends StatelessWidget {
                   Text(
                     stop.detail,
                     style: TextStyle(
-                      fontSize: 16,
+                      fontSize: 13,
                       color: stop.kind == StopKind.next
                           ? AppColors.terracotta
                           : AppColors.muted,
@@ -793,6 +899,35 @@ class StopTimelineItem extends StatelessWidget {
                 ),
               ),
             ),
+        ],
+      ),
+    );
+  }
+}
+
+class _StopsUnavailableCard extends StatelessWidget {
+  const _StopsUnavailableCard();
+
+  @override
+  Widget build(BuildContext context) {
+    return SoftCard(
+      color: AppColors.creamDark,
+      borderColor: AppColors.creamDark,
+      padding: const EdgeInsets.all(16),
+      child: Row(
+        children: [
+          const Icon(Icons.alt_route, color: AppColors.muted),
+          const SizedBox(width: 12),
+          const Expanded(
+            child: Text(
+              'Las paradas de esta ruta aún no están asociadas en el dataset.',
+              style: TextStyle(
+                color: AppColors.muted,
+                fontSize: 14,
+                height: 1.35,
+              ),
+            ),
+          ),
         ],
       ),
     );

@@ -68,7 +68,8 @@ class RoutesRepository {
           eta: '—',
           color: _palette[(i - 1) % _palette.length],
           status: RouteStatus.active,
-          sharedSegment: (props['variantes'] as num?) != null &&
+          sharedSegment:
+              (props['variantes'] as num?) != null &&
                   (props['variantes'] as num) > 1
               ? '${props['variantes']} variantes en OSM'
               : null,
