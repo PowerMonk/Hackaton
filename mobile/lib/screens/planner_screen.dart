@@ -7,6 +7,7 @@ import '../data/planner_local.dart';
 import '../data/planner_geo.dart';
 import '../models/planner_models.dart';
 import 'place_picker_screen.dart';
+import 'route_map_screen.dart';
 import '../theme/app_theme.dart';
 import '../widgets/ui_components.dart';
 
@@ -381,7 +382,12 @@ class _PlannerScreenState extends State<PlannerScreen> {
               ],
               if (result != null) ...[
                 const SizedBox(height: 16),
-                _PlannerResults(result: result!, compact: compact),
+                _PlannerResults(
+                  result: result!,
+                  compact: compact,
+                  origin: originController.text,
+                  destination: destinationController.text,
+                ),
               ],
             ],
           ),
@@ -392,10 +398,17 @@ class _PlannerScreenState extends State<PlannerScreen> {
 }
 
 class _PlannerResults extends StatelessWidget {
-  const _PlannerResults({required this.result, required this.compact});
+  const _PlannerResults({
+    required this.result,
+    required this.compact,
+    required this.origin,
+    required this.destination,
+  });
 
   final PlannerResult result;
   final bool compact;
+  final String origin;
+  final String destination;
 
   @override
   Widget build(BuildContext context) {
@@ -406,10 +419,20 @@ class _PlannerResults extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _RecommendedPlan(option: recommended, compact: compact),
+        _RecommendedPlan(
+          option: recommended,
+          compact: compact,
+          origin: origin,
+          destination: destination,
+        ),
         for (final alternative in result.alternatives) ...[
           const SizedBox(height: 12),
-          _AlternativePlan(option: alternative, compact: compact),
+          _AlternativePlan(
+            option: alternative,
+            compact: compact,
+            origin: origin,
+            destination: destination,
+          ),
         ],
         if (result.warnings.isNotEmpty) ...[
           const SizedBox(height: 14),
@@ -770,126 +793,211 @@ class _ModeChoice extends StatelessWidget {
 }
 
 class _RecommendedPlan extends StatelessWidget {
-  const _RecommendedPlan({required this.option, required this.compact});
+  const _RecommendedPlan({
+    required this.option,
+    required this.compact,
+    required this.origin,
+    required this.destination,
+  });
 
   final PlannerOption option;
   final bool compact;
+  final String origin;
+  final String destination;
 
   @override
-  Widget build(BuildContext context) => Container(
-    padding: EdgeInsets.all(compact ? 15 : 19),
-    decoration: BoxDecoration(
-      color: AppColors.ink,
-      border: Border.all(color: AppColors.green, width: 4),
+  Widget build(BuildContext context) => Material(
+    color: Colors.transparent,
+    child: InkWell(
+      onTap: () {
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => RouteMapScreen(
+              option: option,
+              origin: origin,
+              destination: destination,
+            ),
+          ),
+        );
+      },
       borderRadius: BorderRadius.circular(26),
-    ),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Wrap(
-          alignment: WrapAlignment.spaceBetween,
-          runSpacing: 10,
-          spacing: 12,
+      child: Container(
+        padding: EdgeInsets.all(compact ? 15 : 19),
+        decoration: BoxDecoration(
+          color: AppColors.ink,
+          border: Border.all(color: AppColors.green, width: 4),
+          borderRadius: BorderRadius.circular(26),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-              decoration: BoxDecoration(
-                color: AppColors.greenBright,
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: const Text(
-                'RECOMENDADA',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w800,
+            Wrap(
+              alignment: WrapAlignment.spaceBetween,
+              runSpacing: 10,
+              spacing: 12,
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: AppColors.greenBright,
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: const Text(
+                    'RECOMENDADA',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
                 ),
-              ),
+                Text(
+                  '${option.durationMinutes} min',
+                  style: TextStyle(
+                    color: AppColors.cream,
+                    fontSize: compact ? 29 : 35,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ],
             ),
-            Text(
-              '${option.durationMinutes} min',
-              style: TextStyle(
-                color: AppColors.cream,
-                fontSize: compact ? 29 : 35,
-                fontWeight: FontWeight.w800,
-              ),
+            const SizedBox(height: 20),
+            Wrap(
+              crossAxisAlignment: WrapCrossAlignment.center,
+              alignment: WrapAlignment.spaceBetween,
+              runSpacing: 12,
+              spacing: 12,
+              children: [
+                _PlanMetric(
+                  label: '${option.walkingMinutes} min',
+                  detail: 'caminata',
+                  light: true,
+                ),
+                _RouteLabel(route: option.routeLabel),
+                Text(
+                  option.transfers == 0
+                      ? 'Sin transbordos'
+                      : '${option.transfers} transbordos',
+                  style: const TextStyle(color: Colors.white70, fontSize: 15),
+                ),
+              ],
+            ),
+            const Divider(color: Colors.white24, height: 28),
+            Wrap(
+              alignment: WrapAlignment.spaceBetween,
+              runSpacing: 10,
+              spacing: 10,
+              children: [
+                Text(
+                  'Costo estimado ${option.costLabel}',
+                  style: const TextStyle(color: Colors.white70, fontSize: 14),
+                ),
+                _ConfidencePill(confidence: option.confidence, dark: true),
+              ],
+            ),
+            const SizedBox(height: 8),
+            const Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.touch_app, color: Colors.white54, size: 16),
+                SizedBox(width: 6),
+                Text(
+                  'Toca para ver en el mapa',
+                  style: TextStyle(
+                    color: Colors.white54,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
             ),
           ],
         ),
-        const SizedBox(height: 20),
-        Wrap(
-          crossAxisAlignment: WrapCrossAlignment.center,
-          alignment: WrapAlignment.spaceBetween,
-          runSpacing: 12,
-          spacing: 12,
-          children: [
-            _PlanMetric(
-              label: '${option.walkingMinutes} min',
-              detail: 'caminata',
-              light: true,
-            ),
-            _RouteLabel(route: option.routeLabel),
-            Text(
-              option.transfers == 0
-                  ? 'Sin transbordos'
-                  : '${option.transfers} transbordos',
-              style: const TextStyle(color: Colors.white70, fontSize: 15),
-            ),
-          ],
-        ),
-        const Divider(color: Colors.white24, height: 28),
-        Wrap(
-          alignment: WrapAlignment.spaceBetween,
-          runSpacing: 10,
-          spacing: 10,
-          children: [
-            Text(
-              'Costo estimado ${option.costLabel}',
-              style: const TextStyle(color: Colors.white70, fontSize: 14),
-            ),
-            _ConfidencePill(confidence: option.confidence, dark: true),
-          ],
-        ),
-      ],
+      ),
     ),
   );
 }
 
 class _AlternativePlan extends StatelessWidget {
-  const _AlternativePlan({required this.option, required this.compact});
+  const _AlternativePlan({
+    required this.option,
+    required this.compact,
+    required this.origin,
+    required this.destination,
+  });
 
   final PlannerOption option;
   final bool compact;
+  final String origin;
+  final String destination;
 
   @override
-  Widget build(BuildContext context) => SoftCard(
-    padding: EdgeInsets.all(compact ? 15 : 20),
-    child: Wrap(
-      crossAxisAlignment: WrapCrossAlignment.center,
-      alignment: WrapAlignment.spaceBetween,
-      runSpacing: 10,
-      spacing: 14,
-      children: [
-        Text(
-          '${option.durationMinutes} min',
-          style: TextStyle(
-            fontSize: compact ? 25 : 28,
-            fontWeight: FontWeight.w800,
-          ),
-        ),
-        SizedBox(
-          width: compact ? 180 : 210,
-          child: Text(
-            '${option.walkingMinutes} min caminando · ${option.routeLabel} · '
-            '${option.transfers} transbordos · ${option.costLabel}',
-            style: TextStyle(
-              color: const Color(0xFF40506A),
-              fontSize: compact ? 14 : 15,
-              height: 1.35,
+  Widget build(BuildContext context) => Material(
+    color: Colors.transparent,
+    child: InkWell(
+      onTap: () {
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => RouteMapScreen(
+              option: option,
+              origin: origin,
+              destination: destination,
             ),
           ),
+        );
+      },
+      borderRadius: BorderRadius.circular(20),
+      child: SoftCard(
+        padding: EdgeInsets.all(compact ? 15 : 20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Wrap(
+              crossAxisAlignment: WrapCrossAlignment.center,
+              alignment: WrapAlignment.spaceBetween,
+              runSpacing: 10,
+              spacing: 14,
+              children: [
+                Text(
+                  '${option.durationMinutes} min',
+                  style: TextStyle(
+                    fontSize: compact ? 25 : 28,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                SizedBox(
+                  width: compact ? 180 : 210,
+                  child: Text(
+                    '${option.walkingMinutes} min caminando · ${option.routeLabel} · '
+                    '${option.transfers} transbordos · ${option.costLabel}',
+                    style: TextStyle(
+                      color: const Color(0xFF40506A),
+                      fontSize: compact ? 14 : 15,
+                      height: 1.35,
+                    ),
+                  ),
+                ),
+                _ConfidencePill(confidence: option.confidence),
+              ],
+            ),
+            const SizedBox(height: 8),
+            const Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.touch_app, color: AppColors.muted, size: 14),
+                SizedBox(width: 5),
+                Text(
+                  'Toca para ver en el mapa',
+                  style: TextStyle(
+                    color: AppColors.muted,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ],
         ),
-        _ConfidencePill(confidence: option.confidence),
-      ],
+      ),
     ),
   );
 }

@@ -47,6 +47,82 @@ class PlannerRequest {
   };
 }
 
+class RouteLeg {
+  const RouteLeg({
+    required this.mode,
+    required this.from,
+    required this.to,
+    required this.distanceMeters,
+    required this.durationSeconds,
+    this.routeId,
+    this.routeName,
+    this.routeColor,
+    this.geometry,
+    this.instructions,
+  });
+
+  final String mode; // 'walk', 'transit', 'bicycle'
+  final LegPoint from;
+  final LegPoint to;
+  final int distanceMeters;
+  final int durationSeconds;
+  final String? routeId;
+  final String? routeName;
+  final String? routeColor;
+  final List<List<double>>? geometry; // [lon, lat] pairs
+  final String? instructions;
+
+  factory RouteLeg.fromJson(Map<String, dynamic> json) {
+    final fromJson = json['from'] as Map<String, dynamic>?;
+    final toJson = json['to'] as Map<String, dynamic>?;
+    final geometryJson = json['geometry'];
+
+    List<List<double>>? coordinates;
+    if (geometryJson is Map && geometryJson['coordinates'] is List) {
+      final coords = geometryJson['coordinates'] as List;
+      coordinates = coords
+          .map((coord) => coord is List && coord.length >= 2
+              ? [_number(coord[0]), _number(coord[1])]
+              : <double>[])
+          .where((coord) => coord.isNotEmpty)
+          .toList();
+    }
+
+    return RouteLeg(
+      mode: json['mode'] as String? ?? 'walk',
+      from: fromJson != null ? LegPoint.fromJson(fromJson) : const LegPoint(lat: 0, lon: 0),
+      to: toJson != null ? LegPoint.fromJson(toJson) : const LegPoint(lat: 0, lon: 0),
+      distanceMeters: _number(json['distanceMeters']).round(),
+      durationSeconds: _number(json['durationSeconds']).round(),
+      routeId: json['routeId'] as String?,
+      routeName: json['routeName'] as String?,
+      routeColor: json['routeColor'] as String?,
+      geometry: coordinates,
+      instructions: json['instructions'] as String?,
+    );
+  }
+}
+
+class LegPoint {
+  const LegPoint({
+    required this.lat,
+    required this.lon,
+    this.label,
+  });
+
+  final double lat;
+  final double lon;
+  final String? label;
+
+  factory LegPoint.fromJson(Map<String, dynamic> json) {
+    return LegPoint(
+      lat: _number(json['lat']),
+      lon: _number(json['lon']),
+      label: json['label'] as String?,
+    );
+  }
+}
+
 class PlannerOption {
   const PlannerOption({
     required this.id,
@@ -58,6 +134,7 @@ class PlannerOption {
     required this.transfers,
     required this.provisional,
     this.warnings = const [],
+    this.legs = const [],
   });
 
   final String id;
@@ -69,6 +146,7 @@ class PlannerOption {
   final int transfers;
   final bool provisional;
   final List<String> warnings;
+  final List<RouteLeg> legs;
 
   int get durationMinutes =>
       (durationSeconds / 60).round().clamp(1, 9999).toInt();
@@ -110,6 +188,8 @@ class PlannerOption {
                 (sum, leg) => sum + _number(leg['distanceMeters']),
               );
 
+    final legsList = legs.map((legJson) => RouteLeg.fromJson(legJson)).toList();
+
     return PlannerOption(
       id: json['id'] as String? ?? 'plan-${routeNames.join('-')}',
       durationSeconds: duration.round(),
@@ -120,6 +200,7 @@ class PlannerOption {
       transfers: (_number(json['transfers'])).round(),
       provisional: json['provisional'] != false,
       warnings: {...fallbackWarnings, ..._strings(json['warnings'])}.toList(),
+      legs: legsList,
     );
   }
 }
