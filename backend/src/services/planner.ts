@@ -226,15 +226,27 @@ export function planProvisionalRoutes(
   }
 
   if (modes.has("transit")) {
-    plans.push(
-      ...buildDirectTransitPlans(
+    // First, find direct routes (no transfers)
+    const directPlans = buildDirectTransitPlans(
+      request,
+      dataset,
+      originCandidates,
+      destinationCandidates,
+      config
+    );
+    plans.push(...directPlans);
+
+    // If no direct routes found, try one-transfer routes
+    if (directPlans.length === 0) {
+      const transferPlans = buildTransferTransitPlans(
         request,
         dataset,
         originCandidates,
         destinationCandidates,
         config
-      )
-    );
+      );
+      plans.push(...transferPlans);
+    }
   }
 
   const hasTransitPlan = plans.some((plan) => plan.routeIds.length > 0);
@@ -334,6 +346,211 @@ function buildDirectTransitPlans(
   }
 
   return plans;
+}
+
+/**
+ * Build transit plans with one transfer.
+ * Finds routes where user takes route A to a transfer stop, then route B to destination.
+ */
+function buildTransferTransitPlans(
+  request: PlannerRequest,
+  dataset: PlannerDataset,
+  originCandidates: readonly PlannerStopCandidate[],
+  destinationCandidates: readonly PlannerStopCandidate[],
+  config: PlannerConfig
+): PlannerPlan[] {
+  const stopsById = new Map(dataset.stops.map((stop) => [stop.id, stop]));
+  const plans: PlannerPlan[] = [];
+  const maxTransferPlans = 3;
+
+  // Build a map of route -> stops it serves
+  const routeStops = new Map<string, Set<string>>();
+  for (const stop of dataset.stops) {
+    for (const routeId of stop.routeIds ?? []) {
+      if (!routeStops.has(routeId)) {
+        routeStops.set(routeId, new Set());
+      }
+      routeStops.get(routeId)!.add(stop.id);
+    }
+  }
+
+  // Find routes serving origin stops
+  const originRoutes = new Map<string, PlannerStop>();
+  for (const candidate of originCandidates) {
+    const stop = stopsById.get(candidate.stopId);
+    if (!stop) continue;
+    for (const routeId of stop.routeIds ?? []) {
+      if (!originRoutes.has(routeId)) {
+        originRoutes.set(routeId, stop);
+      }
+    }
+  }
+
+  // Find routes serving destination stops
+  const destRoutes = new Map<string, PlannerStop>();
+  for (const candidate of destinationCandidates) {
+    const stop = stopsById.get(candidate.stopId);
+    if (!stop) continue;
+    for (const routeId of stop.routeIds ?? []) {
+      if (!destRoutes.has(routeId)) {
+        destRoutes.set(routeId, stop);
+      }
+    }
+  }
+
+  // Find transfer points: stops served by both an origin route and a dest route
+  const transferCandidates: Array<{
+    transferStop: PlannerStop;
+    route1Id: string;
+    route2Id: string;
+    originStop: PlannerStop;
+    destStop: PlannerStop;
+    score: number;
+  }> = [];
+
+  for (const [route1Id, originStop] of originRoutes) {
+    const route1Stops = routeStops.get(route1Id);
+    if (!route1Stops) continue;
+
+    for (const [route2Id, destStop] of destRoutes) {
+      if (route1Id === route2Id) continue; // Skip same route (handled by direct)
+
+      const route2Stops = routeStops.get(route2Id);
+      if (!route2Stops) continue;
+
+      // Find common stops (transfer points)
+      for (const transferStopId of route1Stops) {
+        if (route2Stops.has(transferStopId)) {
+          const transferStop = stopsById.get(transferStopId);
+          if (!transferStop) continue;
+
+          // Calculate score based on total walking + transit distance
+          const score =
+            haversineDistanceMeters(request.origin, originStop.coordinates) +
+            haversineDistanceMeters(originStop.coordinates, transferStop.coordinates) +
+            haversineDistanceMeters(transferStop.coordinates, destStop.coordinates) +
+            haversineDistanceMeters(destStop.coordinates, request.destination);
+
+          transferCandidates.push({
+            transferStop,
+            route1Id,
+            route2Id,
+            originStop,
+            destStop,
+            score,
+          });
+        }
+      }
+    }
+  }
+
+  // Sort by score and take best candidates
+  transferCandidates.sort((a, b) => a.score - b.score);
+
+  for (const candidate of transferCandidates.slice(0, maxTransferPlans)) {
+    const route1 = dataset.routes.find((r) => r.id === candidate.route1Id);
+    const route2 = dataset.routes.find((r) => r.id === candidate.route2Id);
+    if (!route1 || !route2) continue;
+
+    const plan = buildTransferPlan(
+      request.origin,
+      request.destination,
+      route1,
+      route2,
+      candidate.originStop,
+      candidate.transferStop,
+      candidate.destStop,
+      config
+    );
+    plans.push(plan);
+  }
+
+  return plans;
+}
+
+function buildTransferPlan(
+  origin: PlannerPlace,
+  destination: PlannerPlace,
+  route1: PlannerRoute,
+  route2: PlannerRoute,
+  originStop: PlannerStop,
+  transferStop: PlannerStop,
+  destStop: PlannerStop,
+  config: PlannerConfig
+): PlannerPlan {
+  const walkToStop = approximateWalkingDistance(origin, originStop.coordinates, config);
+  const transit1Distance = haversineDistanceMeters(originStop.coordinates, transferStop.coordinates);
+  const transit2Distance = haversineDistanceMeters(transferStop.coordinates, destStop.coordinates);
+  const walkFromStop = approximateWalkingDistance(destStop.coordinates, destination, config);
+
+  const walkToStopDuration = walkingDurationSeconds(walkToStop, config);
+  const transit1Duration = Math.max(0, Math.round(transit1Distance / (config.transitSpeedKmh / 3.6)));
+  const transit2Duration = Math.max(0, Math.round(transit2Distance / (config.transitSpeedKmh / 3.6)));
+  const walkFromStopDuration = walkingDurationSeconds(walkFromStop, config);
+
+  // Add 3 min transfer time
+  const transferTime = 180;
+
+  const route1Label = route1.name || route1.ref || route1.id;
+  const route2Label = route2.name || route2.ref || route2.id;
+
+  const legs: PlannerLeg[] = [
+    {
+      mode: "walk",
+      from: origin,
+      to: placeFromStop(originStop),
+      distanceMeters: walkToStop,
+      durationSeconds: walkToStopDuration,
+      instructions: `Camina hacia ${stopLabel(originStop)}`,
+    },
+    {
+      mode: "transit",
+      from: placeFromStop(originStop),
+      to: placeFromStop(transferStop),
+      distanceMeters: Math.round(transit1Distance),
+      durationSeconds: transit1Duration,
+      routeId: route1.id,
+      routeName: route1Label,
+      routeColor: route1.color,
+      instructions: `Toma ${route1Label} hacia ${stopLabel(transferStop)}`,
+    },
+    {
+      mode: "transit",
+      from: placeFromStop(transferStop),
+      to: placeFromStop(destStop),
+      distanceMeters: Math.round(transit2Distance),
+      durationSeconds: transit2Duration + transferTime,
+      routeId: route2.id,
+      routeName: route2Label,
+      routeColor: route2.color,
+      instructions: `Transbordo: toma ${route2Label} hacia ${stopLabel(destStop)}`,
+    },
+    {
+      mode: "walk",
+      from: placeFromStop(destStop),
+      to: destination,
+      distanceMeters: walkFromStop,
+      durationSeconds: walkFromStopDuration,
+      instructions: `Camina hacia ${destination.label}`,
+    },
+  ];
+
+  const totalCost = positiveOrZero(route1.fare, config.defaultTransitFare) +
+                    positiveOrZero(route2.fare, config.defaultTransitFare);
+
+  return {
+    id: `transfer-${route1.id}-${route2.id}`,
+    legs,
+    totalDistanceMeters: Math.round(walkToStop + transit1Distance + transit2Distance + walkFromStop),
+    totalDurationSeconds: walkToStopDuration + transit1Duration + transferTime + transit2Duration + walkFromStopDuration,
+    totalWalkingMeters: Math.round(walkToStop + walkFromStop),
+    transfers: 1,
+    estimatedCost: totalCost,
+    routeIds: [route1.id, route2.id],
+    confidence: "low",
+    provisional: true,
+    isFallback: false,
+  };
 }
 
 function buildWalkingPlan(

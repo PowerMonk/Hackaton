@@ -118,6 +118,21 @@ class HttpMobilityApi implements MobilityApi, RoutePlanningApi {
       );
 
   @override
+  Future<List<Map<String, dynamic>>> autocomplete(
+    String query, {
+    int limit = 5,
+  }) async {
+    final body = await _jsonRequest(
+      () => _client.get(
+        _endpoint('/geocoding/autocomplete').replace(
+          queryParameters: {'q': query, 'limit': '$limit'},
+        ),
+      ),
+    );
+    return _mapList(body['suggestions']);
+  }
+
+  @override
   Future<String> openBoardingSession(String routeId) async {
     final body = await _jsonRequest(
       () => _client.post(

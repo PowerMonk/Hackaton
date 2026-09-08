@@ -37,6 +37,7 @@ abstract interface class MobilityApi {
   Future<void> closeBoardingSession(String sessionId);
   Future<void> postLocation(Map<String, dynamic> sample);
   Stream<Map<String, dynamic>> watchRoute(String routeId);
+  Future<List<Map<String, dynamic>>> autocomplete(String query, {int limit = 5});
 }
 
 /// Optional capability so existing API fakes do not need to implement planner

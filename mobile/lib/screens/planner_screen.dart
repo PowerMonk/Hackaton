@@ -247,9 +247,10 @@ class _PlannerScreenState extends State<PlannerScreen> {
                     if (activeField == 'origin')
                       _SuggestionList(
                         query: originController.text,
-                        suggestions: addressSuggestions,
+                        fallbackSuggestions: addressSuggestions,
                         onSelected: (suggestion) =>
                             _selectSuggestion('origin', suggestion),
+                        api: api,
                       ),
                     const Divider(height: 24),
                     _PlaceField(
@@ -263,9 +264,10 @@ class _PlannerScreenState extends State<PlannerScreen> {
                     if (activeField == 'destination')
                       _SuggestionList(
                         query: destinationController.text,
-                        suggestions: addressSuggestions,
+                        fallbackSuggestions: addressSuggestions,
                         onSelected: (suggestion) =>
                             _selectSuggestion('destination', suggestion),
+                        api: api,
                       ),
                   ],
                 ),
@@ -502,28 +504,95 @@ class AddressSuggestion {
   final double lon;
 }
 
-class _SuggestionList extends StatelessWidget {
+class _SuggestionList extends StatefulWidget {
   const _SuggestionList({
     required this.query,
-    required this.suggestions,
+    required this.fallbackSuggestions,
     required this.onSelected,
+    required this.api,
   });
 
   final String query;
-  final List<AddressSuggestion> suggestions;
+  final List<AddressSuggestion> fallbackSuggestions;
   final ValueChanged<AddressSuggestion> onSelected;
+  final MobilityApi api;
+
+  @override
+  State<_SuggestionList> createState() => _SuggestionListState();
+}
+
+class _SuggestionListState extends State<_SuggestionList> {
+  List<AddressSuggestion>? _apiSuggestions;
+  bool _isLoading = false;
+  String _lastQuery = '';
+
+  @override
+  void didUpdateWidget(_SuggestionList oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.query != _lastQuery && widget.query.length >= 2) {
+      _fetchSuggestions();
+    }
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.query.length >= 2) {
+      _fetchSuggestions();
+    }
+  }
+
+  Future<void> _fetchSuggestions() async {
+    final query = widget.query.trim();
+    if (query.length < 2) return;
+
+    _lastQuery = query;
+    setState(() => _isLoading = true);
+
+    try {
+      final results = await widget.api.autocomplete(query, limit: 5);
+      if (!mounted || query != widget.query.trim()) return;
+
+      setState(() {
+        _apiSuggestions = results
+            .map((r) => AddressSuggestion(
+                  label: r['label'] as String? ?? '',
+                  detail: r['city'] as String? ?? r['category'] as String? ?? '',
+                  lat: (r['lat'] as num?)?.toDouble() ?? 0,
+                  lon: (r['lon'] as num?)?.toDouble() ?? 0,
+                ))
+            .where((s) => s.label.isNotEmpty)
+            .toList();
+        _isLoading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _apiSuggestions = null;
+        _isLoading = false;
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    final normalized = query.trim().toLowerCase();
-    final matches = suggestions
-        .where(
-          (suggestion) =>
-              suggestion.label.toLowerCase().contains(normalized) ||
-              suggestion.detail.toLowerCase().contains(normalized),
-        )
-        .toList();
-    final visible = matches.isEmpty ? suggestions : matches;
+    final normalized = widget.query.trim().toLowerCase();
+
+    // Use API results if available, otherwise filter fallback
+    List<AddressSuggestion> visible;
+    if (_apiSuggestions != null && _apiSuggestions!.isNotEmpty) {
+      visible = _apiSuggestions!;
+    } else {
+      final matches = widget.fallbackSuggestions
+          .where(
+            (s) =>
+                s.label.toLowerCase().contains(normalized) ||
+                s.detail.toLowerCase().contains(normalized),
+          )
+          .toList();
+      visible = matches.isEmpty ? widget.fallbackSuggestions : matches;
+    }
+
     return Container(
       margin: const EdgeInsets.only(top: 6),
       decoration: BoxDecoration(
@@ -532,13 +601,22 @@ class _SuggestionList extends StatelessWidget {
       ),
       child: Column(
         children: [
-          if (matches.isEmpty && normalized.isNotEmpty)
+          if (_isLoading)
+            const Padding(
+              padding: EdgeInsets.all(12),
+              child: SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            )
+          else if (_apiSuggestions == null && normalized.isNotEmpty)
             const Padding(
               padding: EdgeInsets.fromLTRB(14, 10, 14, 2),
               child: Align(
                 alignment: Alignment.centerLeft,
                 child: Text(
-                  'Elige uno de estos puntos guardados:',
+                  'Sugerencias guardadas:',
                   style: TextStyle(color: AppColors.muted, fontSize: 13),
                 ),
               ),
@@ -546,7 +624,15 @@ class _SuggestionList extends StatelessWidget {
           for (final suggestion in visible)
             ListTile(
               dense: true,
-              leading: const Icon(Icons.location_on_outlined, size: 21),
+              leading: Icon(
+                suggestion.detail.contains('parada')
+                    ? Icons.directions_bus
+                    : Icons.location_on_outlined,
+                size: 21,
+                color: suggestion.detail.contains('parada')
+                    ? AppColors.terracotta
+                    : null,
+              ),
               title: Text(
                 suggestion.label,
                 style: const TextStyle(
@@ -555,7 +641,7 @@ class _SuggestionList extends StatelessWidget {
                 ),
               ),
               subtitle: Text(suggestion.detail),
-              onTap: () => onSelected(suggestion),
+              onTap: () => widget.onSelected(suggestion),
             ),
         ],
       ),
