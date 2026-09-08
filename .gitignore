@@ -1,5 +1,5 @@
 # Educational simulation coursework is kept local and read-only.
-# /Simulacion/
+/Simulacion/
 
 # Local environment and secrets.
 .env
