@@ -23,3 +23,10 @@ __pycache__/
 # Generic logs and temporary files.
 *.log
 *.tmp
+
+# Bun lockfile (optional to commit)
+bun.lockb
+
+# Docker volumes data (if mounted locally)
+postgres_data/
+osrm_data/

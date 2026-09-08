@@ -1,0 +1,46 @@
+services:
+  postgres:
+    image: postgis/postgis:16-3.4-alpine
+    container_name: morelia-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: morelia
+      POSTGRES_PASSWORD: morelia_dev_2024
+      POSTGRES_DB: morelia_conecta
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U morelia -d morelia_conecta"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # Windows Docker Desktop compatibility
+    networks:
+      - morelia-net
+
+  # OSRM for street routing (optional, can use public demo for MVP)
+  osrm:
+    image: osrm/osrm-backend:latest
+    container_name: morelia-osrm
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    volumes:
+      - osrm_data:/data
+    # Pre-built data required; see backend/scripts/prepare-osrm.sh
+    command: osrm-routed --algorithm mld /data/michoacan-latest.osrm
+    profiles:
+      - osrm  # Only start with: docker compose --profile osrm up
+    networks:
+      - morelia-net
+
+volumes:
+  postgres_data:
+  osrm_data:
+
+networks:
+  morelia-net:
+    driver: bridge
