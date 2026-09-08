@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:morelia_conecta/data/mobility_api.dart';
+import 'package:morelia_conecta/data/place_picker_logic.dart';
 import 'package:morelia_conecta/models/planner_models.dart';
 
 void main() {
@@ -60,6 +61,39 @@ void main() {
     expect(result.recommended?.costLabel, '\$11 est.');
     expect(result.alternatives, hasLength(1));
     expect(result.warnings, contains('No hay horarios oficiales.'));
+  });
+
+  test('envía coordenadas al endpoint de reverse geocoding', () async {
+    final client = RecordingClient({
+      'result': {'label': 'Catedral de Morelia', 'lat': 19.7, 'lon': -101.19},
+    });
+    final api = HttpMobilityApi(
+      client: client,
+      baseUri: Uri.parse('http://localhost:3000'),
+    );
+
+    final result = await api.reverseGeocode(19.7, -101.19);
+
+    expect(client.lastRequest.method, 'GET');
+    expect(client.lastRequest.url.path, '/geocoding/reverse');
+    expect(client.lastRequest.url.queryParameters, {
+      'lat': '19.7',
+      'lon': '-101.19',
+    });
+    expect(result['label'], 'Catedral de Morelia');
+  });
+
+  test('normaliza una sugerencia y descarta coordenadas inválidas', () {
+    final suggestion = addressSuggestionFromJson({
+      'label': 'Plaza de Armas',
+      'city': 'Morelia',
+      'lat': 19.702,
+      'lon': -101.192,
+    });
+
+    expect(suggestion?.label, 'Plaza de Armas');
+    expect(suggestion?.lat, 19.702);
+    expect(addressSuggestionFromJson({'label': 'Sin mapa'}), isNull);
   });
 }
 

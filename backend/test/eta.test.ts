@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { calculateEta, smoothSpeedKmh } from "../src/services/eta";
+import {
+  calculateEta,
+  selectBestVehicleEta,
+  smoothSpeedKmh,
+} from "../src/services/eta";
 
 const now = new Date("2026-09-08T12:00:00.000Z");
 
@@ -69,5 +73,31 @@ describe("ETA", () => {
     expect(result.remainingDistanceM).toBe(0);
     expect(result.minMinutes).toBe(0);
     expect(result.maxMinutes).toBe(1);
+  });
+
+  test("prefers a vehicle still approaching over one that already passed", () => {
+    const result = selectBestVehicleEta(
+      [
+        {
+          id: "passed",
+          progress: 0.75,
+          speedKmh: 20,
+          lastObservedAt: now,
+        },
+        {
+          id: "approaching",
+          progress: 0.55,
+          speedKmh: 20,
+          lastObservedAt: now,
+        },
+      ],
+      0.6,
+      10_000,
+      "route-1",
+      { now, allowNextLoop: true },
+    );
+
+    expect(result?.vehicleId).toBe("approaching");
+    expect(result?.isNextLoop).toBe(false);
   });
 });

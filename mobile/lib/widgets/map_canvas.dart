@@ -93,23 +93,24 @@ class DemoMap extends StatelessWidget {
   /// Returns true if we have real vehicles from WebSocket.
   bool get _hasRealVehicles => vehicles.isNotEmpty;
 
-  /// Returns true if we have real stops.
-  bool get _hasRealStops => stops.isNotEmpty;
-
   /// Generates vehicle markers - prefers real vehicles, falls back to simulated.
   List<Marker> get _vehicleMarkers {
     if (_hasRealVehicles) {
-      return vehicles.map((v) => Marker(
-        point: LatLng(v.lat, v.lon),
-        width: 58,
-        height: 58,
-        child: _VehicleMarker(
-          speed: v.speed,
-          confidence: v.confidence,
-          heading: v.heading,
-          isSimulated: v.isSimulated,
-        ),
-      )).toList();
+      return vehicles
+          .map(
+            (v) => Marker(
+              point: LatLng(v.lat, v.lon),
+              width: 58,
+              height: 58,
+              child: _VehicleMarker(
+                speed: v.speed,
+                confidence: v.confidence,
+                heading: v.heading,
+                isSimulated: v.isSimulated,
+              ),
+            ),
+          )
+          .toList();
     }
 
     // Fallback to single demo vehicle
@@ -125,24 +126,6 @@ class DemoMap extends StatelessWidget {
     }
 
     return [];
-  }
-
-  /// Generates stop markers from real stops.
-  List<Marker> get _stopMarkers {
-    if (!_hasRealStops) return [];
-
-    return stops.map((stop) => Marker(
-      point: stop.position,
-      width: 32,
-      height: 32,
-      child: Tooltip(
-        message: stop.name,
-        child: StopMarkerWidget(
-          name: stop.name,
-          isInferred: stop.isInferred,
-        ),
-      ),
-    )).toList();
   }
 
   /// Freshness label for map pill.
@@ -182,7 +165,6 @@ class DemoMap extends StatelessWidget {
   Widget build(BuildContext context) {
     final segments = _effectiveSegments;
     final user = isLiveLocation ? userPosition : _simUser;
-    final vehicle = _simVehicle;
     return SizedBox(
       height: height,
       width: double.infinity,
@@ -241,9 +223,6 @@ class DemoMap extends StatelessWidget {
                 ),
                 MarkerLayer(
                   markers: [
-                    // Real stops from backend/GeoJSON
-                    ..._stopMarkers,
-
                     // User position marker
                     if (user != null)
                       Marker(
@@ -280,10 +259,7 @@ class DemoMap extends StatelessWidget {
             Positioned(
               top: 16,
               right: 16,
-              child: _MapPill(
-                label: _freshnessLabel,
-                dark: false,
-              ),
+              child: _MapPill(label: _freshnessLabel, dark: false),
             )
           else if (showDemoLabel || (!_hasRealVehicles && showRoute))
             Positioned(

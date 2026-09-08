@@ -1,3 +1,17 @@
+class AddressSuggestion {
+  const AddressSuggestion({
+    required this.label,
+    required this.detail,
+    required this.lat,
+    required this.lon,
+  });
+
+  final String label;
+  final String detail;
+  final double lat;
+  final double lon;
+}
+
 class PlannerPlace {
   const PlannerPlace({
     required this.label,

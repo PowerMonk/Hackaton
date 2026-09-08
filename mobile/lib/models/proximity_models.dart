@@ -17,9 +17,11 @@ class NearbyStop {
     id: json['id'] as String,
     name: json['name'] as String?,
     distanceMeters: (json['distanceMeters'] as num).toDouble(),
-    routeIds: (json['routeIds'] as List<dynamic>?)
-        ?.map((e) => e as String)
-        .toList() ?? [],
+    routeIds:
+        (json['routeIds'] as List<dynamic>?)
+            ?.map((e) => e as String)
+            .toList() ??
+        [],
   );
 }
 
@@ -34,7 +36,8 @@ class ProximityEvent {
     required this.timestamp,
   });
 
-  final String type; // near_stop, at_stop, boarding_likely, on_vehicle, alighting_likely
+  final String
+  type; // near_stop, at_stop, boarding_likely, on_vehicle, alighting_likely
   final String? stopId;
   final String? stopName;
   final String? routeId;
@@ -70,7 +73,8 @@ class ProximityNotification {
   });
 
   final String id;
-  final String type; // boarding_prompt, destination_alert, stop_approaching, transfer_reminder
+  final String
+  type; // boarding_prompt, destination_alert, stop_approaching, transfer_reminder
   final String title;
   final String body;
   final String priority;
@@ -117,21 +121,29 @@ class BoardingState {
   factory BoardingState.fromJson(Map<String, dynamic> json) => BoardingState(
     isNearStop: json['isNearStop'] as bool? ?? false,
     isOnVehicle: json['isOnVehicle'] as bool? ?? false,
-    nearbyStops: (json['nearbyStops'] as List<dynamic>?)
-        ?.map((e) => NearbyStop.fromJson(e as Map<String, dynamic>))
-        .toList() ?? [],
+    nearbyStops:
+        (json['nearbyStops'] as List<dynamic>?)
+            ?.map((e) => NearbyStop.fromJson(e as Map<String, dynamic>))
+            .toList() ??
+        [],
     currentRouteId: json['currentRouteId'] as String?,
     routeProgress: (json['routeProgress'] as num?)?.toDouble(),
     lastStopId: json['lastStopId'] as String?,
     boardedAt: json['boardedAt'] != null
         ? DateTime.parse(json['boardedAt'] as String)
         : null,
-    events: (json['events'] as List<dynamic>?)
-        ?.map((e) => ProximityEvent.fromJson(e as Map<String, dynamic>))
-        .toList() ?? [],
-    notifications: (json['notifications'] as List<dynamic>?)
-        ?.map((e) => ProximityNotification.fromJson(e as Map<String, dynamic>))
-        .toList() ?? [],
+    events:
+        (json['events'] as List<dynamic>?)
+            ?.map((e) => ProximityEvent.fromJson(e as Map<String, dynamic>))
+            .toList() ??
+        [],
+    notifications:
+        (json['notifications'] as List<dynamic>?)
+            ?.map(
+              (e) => ProximityNotification.fromJson(e as Map<String, dynamic>),
+            )
+            .toList() ??
+        [],
   );
 
   static const empty = BoardingState(
@@ -145,16 +157,25 @@ class BoardingState {
   /// Get the most important event for display.
   ProximityEvent? get primaryEvent {
     // Priority: on_vehicle > at_stop > boarding_likely > near_stop > alighting_likely
-    for (final type in ['on_vehicle', 'at_stop', 'boarding_likely', 'near_stop', 'alighting_likely']) {
-      final event = events.firstWhere((e) => e.type == type, orElse: () => events.first);
-      if (event.type == type) return event;
+    for (final type in [
+      'on_vehicle',
+      'at_stop',
+      'boarding_likely',
+      'near_stop',
+      'alighting_likely',
+    ]) {
+      for (final event in events) {
+        if (event.type == type) return event;
+      }
     }
     return events.isNotEmpty ? events.first : null;
   }
 
   /// Get the closest stop.
-  NearbyStop? get closestStop => nearbyStops.isNotEmpty ? nearbyStops.first : null;
+  NearbyStop? get closestStop =>
+      nearbyStops.isNotEmpty ? nearbyStops.first : null;
 
   /// Progress as percentage (0-100).
-  int get progressPercent => routeProgress != null ? (routeProgress! * 100).round() : 0;
+  int get progressPercent =>
+      routeProgress != null ? (routeProgress! * 100).round() : 0;
 }

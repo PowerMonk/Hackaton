@@ -30,6 +30,7 @@ import {
 import { getSimulation } from "../simulation/engine";
 import { parseLocationSample } from "../services/location-validation";
 import { getDatabaseStats, cleanupOldData } from "../services/cleanup";
+import { sql } from "../db/connection";
 import type { LocationSample, RoutePlanRequest } from "../types";
 
 interface ServerState {
@@ -317,7 +318,7 @@ export async function handleRequest(
       const { detectBoardingState, findNearbyStops } = await import("../services/proximity");
 
       // Get session info
-      const sessionResult = await import("../db/connection").then(m => m.sql)`
+      const sessionResult = await sql`
         SELECT
           bs.route_id,
           bs.current_progress,
@@ -330,7 +331,12 @@ export async function handleRequest(
           ls.distance_from_route
         FROM boarding_sessions bs
         LEFT JOIN LATERAL (
-          SELECT lat, lon, matched_route_id, route_progress, distance_from_route
+          SELECT
+            ST_Y(location::geometry) as lat,
+            ST_X(location::geometry) as lon,
+            matched_route_id,
+            route_progress,
+            distance_from_route
           FROM location_samples
           WHERE session_id = bs.id
           ORDER BY created_at DESC

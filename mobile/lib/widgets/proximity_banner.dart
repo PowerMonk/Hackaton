@@ -65,10 +65,7 @@ class ProximityBanner extends StatelessWidget {
 }
 
 class _AtStopBanner extends StatelessWidget {
-  const _AtStopBanner({
-    required this.stopName,
-    this.onDismiss,
-  });
+  const _AtStopBanner({required this.stopName, this.onDismiss});
 
   final String stopName;
   final VoidCallback? onDismiss;
@@ -78,7 +75,7 @@ class _AtStopBanner extends StatelessWidget {
     return _BannerContainer(
       color: AppColors.teal,
       icon: Icons.location_on,
-      title: 'En la parada',
+      title: 'Punto de abordaje cercano',
       subtitle: stopName,
       onDismiss: onDismiss,
     );
@@ -101,7 +98,7 @@ class _NearStopBanner extends StatelessWidget {
     return _BannerContainer(
       color: AppColors.amber,
       icon: Icons.near_me,
-      title: 'Cerca de $stopName',
+      title: 'Cerca del recorrido',
       subtitle: '${distanceMeters}m de distancia',
       onDismiss: onDismiss,
     );
@@ -133,7 +130,10 @@ class _BoardingPromptBanner extends StatelessWidget {
               style: TextButton.styleFrom(
                 backgroundColor: Colors.white,
                 foregroundColor: AppColors.terracotta,
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 8,
+                ),
               ),
               child: const Text(
                 'Sí, ya subí',
@@ -210,7 +210,10 @@ class _ArrivalPromptBanner extends StatelessWidget {
               style: TextButton.styleFrom(
                 backgroundColor: Colors.white,
                 foregroundColor: AppColors.teal,
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 8,
+                ),
               ),
               child: const Text(
                 'Sí, llegué',
@@ -294,10 +297,7 @@ class _BannerContainer extends StatelessWidget {
             ),
           ),
           if (trailing != null) trailing!,
-          if (action != null) ...[
-            const SizedBox(width: 10),
-            action!,
-          ],
+          if (action != null) ...[const SizedBox(width: 10), action!],
           if (onDismiss != null && action == null)
             IconButton(
               onPressed: onDismiss,
@@ -313,10 +313,7 @@ class _BannerContainer extends StatelessWidget {
 
 /// Compact proximity indicator for minimized trip view.
 class ProximityIndicator extends StatelessWidget {
-  const ProximityIndicator({
-    required this.state,
-    super.key,
-  });
+  const ProximityIndicator({required this.state, super.key});
 
   final BoardingState state;
 

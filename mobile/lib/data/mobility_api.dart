@@ -124,12 +124,25 @@ class HttpMobilityApi implements MobilityApi, RoutePlanningApi {
   }) async {
     final body = await _jsonRequest(
       () => _client.get(
-        _endpoint('/geocoding/autocomplete').replace(
-          queryParameters: {'q': query, 'limit': '$limit'},
-        ),
+        _endpoint(
+          '/geocoding/autocomplete',
+        ).replace(queryParameters: {'q': query, 'limit': '$limit'}),
       ),
     );
     return _mapList(body['suggestions']);
+  }
+
+  @override
+  Future<Map<String, dynamic>> reverseGeocode(double lat, double lon) async {
+    final body = await _jsonRequest(
+      () => _client.get(
+        _endpoint(
+          '/geocoding/reverse',
+        ).replace(queryParameters: {'lat': '$lat', 'lon': '$lon'}),
+      ),
+    );
+    final result = body['result'];
+    return result is Map ? result.cast<String, dynamic>() : const {};
   }
 
   @override
@@ -138,11 +151,11 @@ class HttpMobilityApi implements MobilityApi, RoutePlanningApi {
       () => _client.post(
         _endpoint('/boarding-sessions'),
         headers: {'Content-Type': 'application/json'},
-         body: jsonEncode({
-           'routeId': routeId,
-           'deviceId': _deviceId,
-           'isSimulated': false,
-         }),
+        body: jsonEncode({
+          'routeId': routeId,
+          'deviceId': _deviceId,
+          'isSimulated': false,
+        }),
       ),
     );
     final sessionId = body['id'] ?? body['sessionId'];
@@ -177,7 +190,9 @@ class HttpMobilityApi implements MobilityApi, RoutePlanningApi {
   }
 
   /// Creates a WebSocket stream with automatic reconnection.
-  Stream<Map<String, dynamic>> _reconnectingWebSocketStream(String routeId) async* {
+  Stream<Map<String, dynamic>> _reconnectingWebSocketStream(
+    String routeId,
+  ) async* {
     const maxRetries = 5;
     const initialBackoff = Duration(seconds: 1);
     const maxBackoff = Duration(seconds: 30);

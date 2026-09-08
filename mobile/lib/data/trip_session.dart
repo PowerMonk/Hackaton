@@ -44,19 +44,23 @@ class VehicleUpdate {
 
   factory VehicleUpdate.fromJson(Map<String, dynamic> json) {
     final position = json['currentPosition'] as Map<String, dynamic>? ?? {};
+    final rawTimestamp = json['lastUpdateAt'];
+    final lastUpdateAt = rawTimestamp is String
+        ? DateTime.tryParse(rawTimestamp) ?? DateTime.fromMillisecondsSinceEpoch(0)
+        : DateTime.fromMillisecondsSinceEpoch(
+            (rawTimestamp as num?)?.toInt() ?? 0,
+          );
     return VehicleUpdate(
       id: json['id'] as String? ?? '',
       routeId: json['routeId'] as String? ?? '',
       progress: (json['progress'] as num?)?.toDouble() ?? 0,
       speed: (json['speed'] as num?)?.toDouble() ?? 0,
       heading: (json['heading'] as num?)?.toDouble() ?? 0,
-      passengerCount: json['passengerCount'] as int? ?? 0,
+      passengerCount: (json['passengerCount'] as num?)?.toInt() ?? 0,
       confidence: json['confidence'] as String? ?? 'Baja',
       lat: (position['lat'] as num?)?.toDouble() ?? 0,
       lon: (position['lon'] as num?)?.toDouble() ?? 0,
-      lastUpdateAt: DateTime.fromMillisecondsSinceEpoch(
-        json['lastUpdateAt'] as int? ?? 0,
-      ),
+      lastUpdateAt: lastUpdateAt,
       isSimulated: json['isSimulated'] as bool? ?? true,
     );
   }
@@ -131,12 +135,7 @@ class TripSessionController {
         (sample) => unawaited(_sendLocation(sample)),
         onError: (Object error, StackTrace _) => _report(error),
       );
-      _mobilitySubscription = api
-          .watchRoute(routeId)
-          .listen(
-            _processWebSocketMessage,
-            onError: (Object error, StackTrace _) => _report(error),
-          );
+      await watchRoute(routeId);
       return const TripStartResult(mode: TripConnectionMode.live);
     } catch (error) {
       await stop();
@@ -144,6 +143,23 @@ class TripSessionController {
         mode: TripConnectionMode.fallbackDemo,
         error: _message(error),
       );
+    }
+  }
+
+  Future<void> watchRoute(String routeId) async {
+    await stopVehicleStream();
+    _mobilitySubscription = api.watchRoute(routeId).listen(
+      _processWebSocketMessage,
+      onError: (Object error, StackTrace _) => _report(error),
+    );
+  }
+
+  Future<void> stopVehicleStream() async {
+    await _mobilitySubscription?.cancel();
+    _mobilitySubscription = null;
+    _latestVehicles = [];
+    if (!_vehicleController.isClosed) {
+      _vehicleController.add(const []);
     }
   }
 
@@ -177,10 +193,8 @@ class TripSessionController {
 
   Future<void> stop() async {
     await _locationSubscription?.cancel();
-    await _mobilitySubscription?.cancel();
+    await stopVehicleStream();
     _locationSubscription = null;
-    _mobilitySubscription = null;
-    _latestVehicles = [];
     await locationSource.stop();
     final sessionId = _sessionId;
     _sessionId = null;

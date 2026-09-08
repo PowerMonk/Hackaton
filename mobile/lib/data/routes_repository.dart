@@ -45,6 +45,36 @@ class RoutesRepository {
     }
   }
 
+  /// Loads the complete local stop set for the offline planner.
+  static Future<List<StopWithCoords>> loadAllStops() async {
+    try {
+      final raw = await rootBundle.loadString(_paradasAsset);
+      final fc = json.decode(raw) as Map<String, dynamic>;
+      final features = (fc['features'] as List).cast<Map<String, dynamic>>();
+      return [
+        for (final feature in features)
+          if (feature['geometry'] is Map) _stopFromFeature(feature),
+      ];
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  static StopWithCoords _stopFromFeature(Map<String, dynamic> feature) {
+    final geometry = (feature['geometry'] as Map).cast<String, dynamic>();
+    final coordinates = (geometry['coordinates'] as List).cast<num>();
+    final properties = (feature['properties'] as Map?)?.cast<String, dynamic>();
+    final name = properties?['nombre'] as String? ?? '';
+    return StopWithCoords(
+      id:
+          feature['id']?.toString() ??
+          'stop-${coordinates[1]}-${coordinates[0]}',
+      name: name.isEmpty ? '(Parada sin nombre)' : name,
+      position: LatLng(coordinates[1].toDouble(), coordinates[0].toDouble()),
+      isInferred: name.isEmpty,
+    );
+  }
+
   /// Parsea un FeatureCollection de rutas a [TransitRoute].
   /// Función pura (sin assets) para poder probarla con el dataset completo.
   static List<TransitRoute> parseRoutesJson(String raw) {
@@ -139,12 +169,14 @@ class RoutesRepository {
         if (best <= maxMeters) {
           final props = (f['properties'] as Map).cast<String, dynamic>();
           final nombre = (props['nombre'] as String?) ?? '(parada sin nombre)';
-          scored.add(_ScoredStop(
-            nombre: nombre,
-            index: bestIdx,
-            position: pt,
-            isInferred: nombre.isEmpty,
-          ));
+          scored.add(
+            _ScoredStop(
+              nombre: nombre,
+              index: bestIdx,
+              position: pt,
+              isInferred: nombre.isEmpty,
+            ),
+          );
         }
       }
       scored.sort((a, b) => a.index.compareTo(b.index));
@@ -166,8 +198,8 @@ class RoutesRepository {
             detail: k == 0
                 ? 'Inicio del tramo · OSM'
                 : scored[k].isInferred
-                    ? 'Parada inferida · estimado'
-                    : 'Parada ${k + 1} · OSM',
+                ? 'Parada inferida · estimado'
+                : 'Parada ${k + 1} · OSM',
             eta: k == 0 ? '' : 'Estimado',
             kind: k == 0
                 ? StopKind.current
@@ -305,15 +337,18 @@ extension StopsWithCoordsExtension on RoutesRepository {
         if (best <= maxMeters) {
           final props = (f['properties'] as Map).cast<String, dynamic>();
           final nombre = (props['nombre'] as String?) ?? '';
-          final id = f['id']?.toString() ??
+          final id =
+              f['id']?.toString() ??
               'stop-${coords[1].toStringAsFixed(5)}-${coords[0].toStringAsFixed(5)}';
-          result.add(StopWithCoords(
-            id: id,
-            name: nombre.isEmpty ? '(Parada sin nombre)' : nombre,
-            position: pt,
-            isInferred: nombre.isEmpty,
-            distanceToRoute: best,
-          ));
+          result.add(
+            StopWithCoords(
+              id: id,
+              name: nombre.isEmpty ? '(Parada sin nombre)' : nombre,
+              position: pt,
+              isInferred: nombre.isEmpty,
+              distanceToRoute: best,
+            ),
+          );
         }
       }
       // Sort by distance to route

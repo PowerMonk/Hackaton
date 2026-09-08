@@ -158,9 +158,22 @@ class FakeMobilityApi implements MobilityApi {
   }
 
   @override
-  Future<void> postLocation(Map<String, dynamic> sample) async {
+  Future<Map<String, dynamic>> postLocation(Map<String, dynamic> sample) async {
     locations.add(sample);
+    return {'id': 'loc-${locations.length}'};
   }
+
+  @override
+  Future<List<Map<String, dynamic>>> autocomplete(
+    String query, {
+    int limit = 5,
+  }) async {
+    return const [];
+  }
+
+  @override
+  Future<Map<String, dynamic>> reverseGeocode(double lat, double lon) async =>
+      const {};
 
   @override
   Stream<Map<String, dynamic>> watchRoute(String routeId) =>

@@ -1,4 +1,4 @@
-# Planner provisional
+# Planner OSM local y backend
 
 `backend/src/services/planner.ts` es un motor puro y determinista. No consulta
 PostGIS, OSRM, la hora actual ni una API externa.
@@ -30,7 +30,33 @@ La fuente OSM actual debe declarar `source: "osm-demo"`, `knownStops: 39` y
 Las tarifas y velocidades son estimaciones configurables. La confianza actual
 es `low` porque las 39 paradas son incompletas y no hay horarios oficiales.
 
-## Integracion futura
+## Cliente offline
+
+La app Flutter usa `mobile/lib/data/planner_geo.dart` en `DEMO_MODE`. Carga las
+124 rutas y las paradas del GeoJSON incluido, genera alternativas directas y
+combinaciones de hasta un transbordo, y conserva una caminata completa como
+fallback. Sigue siendo estimado porque el dataset no contiene horarios GTFS.
+
+## OSRM opcional
+
+El backend usa `OSRM_BASE_URL` para caminar y bicicleta y vuelve a Haversine si
+OSRM no responde. Para usar una instancia local, prepara un extract de OSM de
+Michoacán con las imágenes oficiales de OSRM:
+
+```bash
+docker run --rm -v "$PWD/osrm-data:/data" osrm/osrm-backend:latest \
+  osrm-extract -p /opt/car.lua /data/michoacan-latest.osm.pbf
+docker run --rm -v "$PWD/osrm-data:/data" osrm/osrm-backend:latest \
+  osrm-partition /data/michoacan-latest.osrm
+docker run --rm -v "$PWD/osrm-data:/data" osrm/osrm-backend:latest \
+  osrm-customize /data/michoacan-latest.osrm
+docker compose --profile osrm up -d osrm
+```
+
+El archivo `.osm.pbf` no se incluye por su tamaño. El perfil puede omitirse en
+la demo; el proveedor público y el fallback mantienen funcionando el planner.
+
+## Integracion backend
 
 El adaptador de `POST /route-plans` debe cargar el dataset desde PostGIS,
 mapear sus `Route`/`Stop` a estos tipos locales, invocar el motor y adaptar

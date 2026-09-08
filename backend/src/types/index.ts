@@ -257,6 +257,7 @@ export interface DashboardStop {
 
 export type WsMessageType =
   | "vehicle_update"
+  | "vehicle_snapshot"
   | "eta_update"
   | "session_start"
   | "session_end"

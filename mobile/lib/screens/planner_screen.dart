@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:latlong2/latlong.dart';
 
 import '../data/api_contracts.dart';
 import '../data/mobility_api.dart';
 import '../data/planner_local.dart';
+import '../data/planner_geo.dart';
 import '../models/planner_models.dart';
+import 'place_picker_screen.dart';
 import '../theme/app_theme.dart';
 import '../widgets/ui_components.dart';
 
@@ -140,10 +143,17 @@ class _PlannerScreenState extends State<PlannerScreen> {
     });
 
     if (ApiConfig.mode == AppMode.demo) {
+      final offlineResult = await GeoPlanner.plan(
+        origin: request.origin,
+        destination: request.destination,
+        priority: request.priority,
+        modes: request.modes,
+      );
+      if (!mounted) return;
       setState(() {
-        result = _localResult();
+        result = offlineResult;
         isLoading = false;
-        fallbackMessage = 'Modo demo: mostrando un plan local provisional.';
+        fallbackMessage = 'Modo demo: plan calculado con rutas OSM locales.';
       });
       return;
     }
@@ -197,6 +207,25 @@ class _PlannerScreenState extends State<PlannerScreen> {
     });
   }
 
+  Future<void> _openPicker(String field) async {
+    final existing = field == 'origin' ? selectedOrigin : selectedDestination;
+    final picked = await Navigator.of(context).push<AddressSuggestion>(
+      MaterialPageRoute(
+        builder: (_) => PlacePickerScreen(
+          api: api,
+          title: field == 'origin' ? 'Elegir origen' : 'Elegir destino',
+          initialPosition: existing == null
+              ? (field == 'origin'
+                    ? const LatLng(19.7029, -101.1921)
+                    : const LatLng(19.6734, -101.1432))
+              : LatLng(existing.lat, existing.lon),
+          initialLabel: existing?.label,
+        ),
+      ),
+    );
+    if (picked != null && mounted) _selectSuggestion(field, picked);
+  }
+
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
@@ -243,6 +272,7 @@ class _PlannerScreenState extends State<PlannerScreen> {
                       icon: Icons.gps_fixed,
                       onTap: () => setState(() => activeField = 'origin'),
                       onChanged: (value) => _changedField('origin', value),
+                      onPickMap: () => _openPicker('origin'),
                     ),
                     if (activeField == 'origin')
                       _SuggestionList(
@@ -260,6 +290,7 @@ class _PlannerScreenState extends State<PlannerScreen> {
                       icon: Icons.swap_vert,
                       onTap: () => setState(() => activeField = 'destination'),
                       onChanged: (value) => _changedField('destination', value),
+                      onPickMap: () => _openPicker('destination'),
                     ),
                     if (activeField == 'destination')
                       _SuggestionList(
@@ -450,6 +481,7 @@ class _PlaceField extends StatelessWidget {
     required this.icon,
     required this.onTap,
     required this.onChanged,
+    required this.onPickMap,
   });
 
   final TextEditingController controller;
@@ -458,6 +490,7 @@ class _PlaceField extends StatelessWidget {
   final IconData icon;
   final VoidCallback onTap;
   final ValueChanged<String> onChanged;
+  final VoidCallback onPickMap;
 
   @override
   Widget build(BuildContext context) => Row(
@@ -485,23 +518,13 @@ class _PlaceField extends StatelessWidget {
           style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
         ),
       ),
-      Icon(icon, size: 27),
+      IconButton(
+        onPressed: onPickMap,
+        tooltip: 'Elegir en el mapa',
+        icon: Icon(icon, size: 27),
+      ),
     ],
   );
-}
-
-class AddressSuggestion {
-  const AddressSuggestion({
-    required this.label,
-    required this.detail,
-    required this.lat,
-    required this.lon,
-  });
-
-  final String label;
-  final String detail;
-  final double lat;
-  final double lon;
 }
 
 class _SuggestionList extends StatefulWidget {
@@ -555,13 +578,19 @@ class _SuggestionListState extends State<_SuggestionList> {
 
       setState(() {
         _apiSuggestions = results
-            .map((r) => AddressSuggestion(
-                  label: r['label'] as String? ?? '',
-                  detail: r['city'] as String? ?? r['category'] as String? ?? '',
-                  lat: (r['lat'] as num?)?.toDouble() ?? 0,
-                  lon: (r['lon'] as num?)?.toDouble() ?? 0,
-                ))
+            .map(
+              (r) => AddressSuggestion(
+                label: r['label'] as String? ?? '',
+                detail: r['city'] as String? ?? r['category'] as String? ?? '',
+                lat: (r['lat'] as num?)?.toDouble() ?? 0,
+                lon: (r['lon'] as num?)?.toDouble() ?? 0,
+              ),
+            )
             .where((s) => s.label.isNotEmpty)
+            .where(
+              (s) =>
+                  !('${s.label} ${s.detail}'.toLowerCase()).contains('parada'),
+            )
             .toList();
         _isLoading = false;
       });
@@ -624,15 +653,7 @@ class _SuggestionListState extends State<_SuggestionList> {
           for (final suggestion in visible)
             ListTile(
               dense: true,
-              leading: Icon(
-                suggestion.detail.contains('parada')
-                    ? Icons.directions_bus
-                    : Icons.location_on_outlined,
-                size: 21,
-                color: suggestion.detail.contains('parada')
-                    ? AppColors.terracotta
-                    : null,
-              ),
+              leading: const Icon(Icons.location_on_outlined, size: 21),
               title: Text(
                 suggestion.label,
                 style: const TextStyle(

@@ -32,7 +32,7 @@ void main() {
     await tester.tap(viewMapButton);
     await tester.pump();
 
-    expect(find.text('Paradas en secuencia'), findsOneWidget);
+    expect(find.text('Abordaje flexible'), findsOneWidget);
     expect(find.textContaining('Llegada estimada'), findsOneWidget);
   });
 
@@ -155,7 +155,7 @@ void main() {
     await tester.tap(find.byTooltip('Volver al mapa'));
     await tester.pump();
     // Minimizar vuelve al mapa en vez de cerrar la app.
-    expect(find.text('Paradas en secuencia'), findsOneWidget);
+    expect(find.text('Abordaje flexible'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }

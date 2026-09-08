@@ -80,11 +80,12 @@ class _ServiceStatusScreenState extends State<ServiceStatusScreen> {
             const SizedBox(height: 16),
 
             // Stats row
-            if (status != null && status.isConnected)
-              _buildStatsRow(status),
+            if (status != null && status.isConnected) _buildStatsRow(status),
 
             // Simulation details
-            if (status != null && status.isConnected && status.simulation.isRunning)
+            if (status != null &&
+                status.isConnected &&
+                status.simulation.isRunning)
               _buildSimulationCard(status),
 
             // Database details
@@ -110,7 +111,9 @@ class _ServiceStatusScreenState extends State<ServiceStatusScreen> {
 
     return SoftCard(
       color: isConnected && isHealthy ? const Color(0xFFE1F4E8) : AppColors.ink,
-      borderColor: isConnected && isHealthy ? const Color(0xFF9ED5B6) : AppColors.ink,
+      borderColor: isConnected && isHealthy
+          ? const Color(0xFF9ED5B6)
+          : AppColors.ink,
       child: Row(
         children: [
           Container(
@@ -138,7 +141,9 @@ class _ServiceStatusScreenState extends State<ServiceStatusScreen> {
                       ? (isHealthy ? 'Conectado' : 'Servicio degradado')
                       : 'Sin conexión',
                   style: TextStyle(
-                    color: isConnected && isHealthy ? AppColors.green : Colors.white,
+                    color: isConnected && isHealthy
+                        ? AppColors.green
+                        : Colors.white,
                     fontSize: 22,
                     fontWeight: FontWeight.w800,
                   ),
@@ -147,9 +152,11 @@ class _ServiceStatusScreenState extends State<ServiceStatusScreen> {
                 Text(
                   isConnected
                       ? (isHealthy
-                          ? 'Datos en tiempo real disponibles.'
-                          : status?.errorMessage ?? 'El servicio tiene problemas.')
-                      : status?.errorMessage ?? 'Mostramos datos demo guardados.',
+                            ? 'Datos en tiempo real disponibles.'
+                            : status?.errorMessage ??
+                                  'El servicio tiene problemas.')
+                      : status?.errorMessage ??
+                            'Mostramos datos demo guardados.',
                   style: TextStyle(
                     color: isConnected && isHealthy
                         ? AppColors.muted
@@ -250,14 +257,12 @@ class _ServiceStatusScreenState extends State<ServiceStatusScreen> {
               children: [
                 const Text(
                   'Servicio en modo degradado',
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w800,
-                  ),
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
                 ),
                 const SizedBox(height: 7),
                 Text(
-                  status.errorMessage ?? 'Algunos datos pueden estar desactualizados.',
+                  status.errorMessage ??
+                      'Algunos datos pueden estar desactualizados.',
                   style: const TextStyle(
                     color: AppColors.muted,
                     fontSize: 16,
@@ -310,14 +315,14 @@ class _ServiceStatusScreenState extends State<ServiceStatusScreen> {
                 const Expanded(
                   child: Text(
                     'Simulación activa',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w800,
-                    ),
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
                   ),
                 ),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 5,
+                  ),
                   decoration: BoxDecoration(
                     color: AppColors.greenBright.withValues(alpha: 0.2),
                     borderRadius: BorderRadius.circular(8),
@@ -402,7 +407,9 @@ class _ServiceStatusScreenState extends State<ServiceStatusScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    isReady ? 'Base de datos conectada' : 'Base de datos no disponible',
+                    isReady
+                        ? 'Base de datos conectada'
+                        : 'Base de datos no disponible',
                     style: const TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.w700,
@@ -411,7 +418,7 @@ class _ServiceStatusScreenState extends State<ServiceStatusScreen> {
                   const SizedBox(height: 4),
                   Text(
                     isReady
-                        ? '${db.routeCount} rutas · ${db.stopCount} paradas'
+                        ? '${db.routeCount} rutas · abordaje flexible'
                         : 'Usando datos de demostración',
                     style: const TextStyle(
                       color: AppColors.muted,
@@ -438,10 +445,7 @@ class _ServiceStatusScreenState extends State<ServiceStatusScreen> {
       child: Center(
         child: Text(
           'Backend v${status.version}',
-          style: const TextStyle(
-            color: AppColors.muted,
-            fontSize: 13,
-          ),
+          style: const TextStyle(color: AppColors.muted, fontSize: 13),
         ),
       ),
     );
@@ -500,18 +504,12 @@ class _StatCard extends StatelessWidget {
           const SizedBox(height: 8),
           Text(
             value,
-            style: const TextStyle(
-              fontSize: 24,
-              fontWeight: FontWeight.w800,
-            ),
+            style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w800),
           ),
           const SizedBox(height: 4),
           Text(
             label,
-            style: const TextStyle(
-              color: AppColors.muted,
-              fontSize: 14,
-            ),
+            style: const TextStyle(color: AppColors.muted, fontSize: 14),
           ),
         ],
       ),

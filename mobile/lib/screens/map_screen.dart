@@ -4,16 +4,19 @@ import 'package:flutter/material.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../data/demo_data.dart';
-import '../data/demo_simulation.dart';
+import '../data/eta_engine.dart';
 import '../data/api_contracts.dart';
 import '../data/location_source.dart';
 import '../data/mobility_api.dart';
+import '../data/proximity_detector.dart';
 import '../data/routes_repository.dart';
 import '../data/trip_session.dart';
 import '../models/app_models.dart';
 import '../models/mobility_models.dart';
+import '../models/proximity_models.dart';
 import '../theme/app_theme.dart';
 import '../widgets/map_canvas.dart';
+import '../widgets/proximity_banner.dart';
 import '../widgets/ui_components.dart';
 
 class MapScreen extends StatefulWidget {
@@ -45,6 +48,11 @@ class _MapScreenState extends State<MapScreen> {
   String? locationError;
   List<VehicleUpdate> _vehicles = [];
   StreamSubscription<List<VehicleUpdate>>? _vehicleSubscription;
+  List<VehicleUpdate> routeVehicles = const [];
+  DateTime? vehiclesUpdatedAt;
+  List<StopWithCoords> _proximityStops = const [];
+  BoardingState _proximityState = BoardingState.empty;
+  ProximityDetector? _proximityDetector;
 
   @override
   void initState() {
@@ -55,6 +63,8 @@ class _MapScreenState extends State<MapScreen> {
       locationSource: GeolocatorLocationSource(),
       mode: ApiConfig.mode,
       onError: _handleTripError,
+      onVehicleUpdate: _handleVehicleUpdate,
+      onBoardingStateUpdate: _handleBoardingState,
     );
     _loadRealRoutes();
     unawaited(_startLocalLocation());
@@ -101,6 +111,7 @@ class _MapScreenState extends State<MapScreen> {
       locationAccuracy = sample.accuracy;
       locationError = null;
     });
+    _evaluateProximity();
   }
 
   static String _locationPermissionMessage(LocationPermissionState state) {
@@ -120,6 +131,41 @@ class _MapScreenState extends State<MapScreen> {
     setState(() => tripConnectionError = message);
   }
 
+  void _handleVehicleUpdate(List<VehicleUpdate> vehicles) {
+    if (!mounted) return;
+    final routeId = selectedRoute?.id;
+    final filteredVehicles = routeId == null
+        ? vehicles
+        : vehicles.where((vehicle) => vehicle.routeId == routeId).toList();
+    setState(() {
+      routeVehicles = routeId == null
+          ? vehicles
+          : vehicles.where((vehicle) => vehicle.routeId == routeId).toList();
+      vehiclesUpdatedAt = DateTime.now();
+    });
+    _evaluateProximity(filteredVehicles);
+  }
+
+  void _handleBoardingState(BoardingState state) {
+    if (!mounted) return;
+    setState(() => _proximityState = state);
+  }
+
+  void _evaluateProximity([List<VehicleUpdate>? vehicles]) {
+    final route = selectedRoute;
+    if (route == null || _proximityStops.isEmpty) return;
+    final detector = _proximityDetector ??= ProximityDetector(
+      route: route,
+      stops: _proximityStops,
+    );
+    final state = detector.evaluate(
+      userPosition: userPosition,
+      vehicles: vehicles ?? routeVehicles,
+      isOnVehicle: activeTrip,
+    );
+    if (mounted) setState(() => _proximityState = state);
+  }
+
   Future<void> _loadRealRoutes() async {
     final real = await RoutesRepository.loadDemoRoutes();
     if (!mounted) return;
@@ -137,7 +183,27 @@ class _MapScreenState extends State<MapScreen> {
     setState(() {
       selectedRoute = route;
       routeFocused = false;
+      routeVehicles = const [];
+      vehiclesUpdatedAt = null;
+      _proximityState = BoardingState.empty;
+      _proximityStops = const [];
     });
+    unawaited(_tripSession.watchRoute(route.id));
+    unawaited(_loadProximityStops(route));
+  }
+
+  Future<void> _loadProximityStops(TransitRoute route) async {
+    final stops = await StopsWithCoordsExtension.stopsWithCoordsFor(route);
+    if (!mounted || selectedRoute?.id != route.id) return;
+    setState(() => _proximityStops = stops);
+    _proximityDetector = ProximityDetector(route: route, stops: stops);
+    _evaluateProximity();
+  }
+
+  void _clearRouteStream() {
+    routeVehicles = const [];
+    vehiclesUpdatedAt = null;
+    unawaited(_tripSession.stopVehicleStream());
   }
 
   List<TransitRoute> get visibleRoutes {
@@ -151,16 +217,20 @@ class _MapScreenState extends State<MapScreen> {
     };
     list = RoutesRepository.search(list, query);
     if (selectedFilter == 'Cerca de mí' && userPosition != null) {
-      final nearby = list
-          .map(
-            (route) => (
-              route: route,
-              distance: RoutesRepository.distanceToRoute(userPosition!, route),
-            ),
-          )
-          .where((item) => item.distance <= 1500)
-          .toList()
-        ..sort((a, b) => a.distance.compareTo(b.distance));
+      final nearby =
+          list
+              .map(
+                (route) => (
+                  route: route,
+                  distance: RoutesRepository.distanceToRoute(
+                    userPosition!,
+                    route,
+                  ),
+                ),
+              )
+              .where((item) => item.distance <= 1500)
+              .toList()
+            ..sort((a, b) => a.distance.compareTo(b.distance));
       return [for (final item in nearby) item.route];
     }
     return list;
@@ -179,9 +249,11 @@ class _MapScreenState extends State<MapScreen> {
           userPosition: userPosition,
           locationAccuracy: locationAccuracy,
           isLiveLocation: userPosition != null,
+          vehicles: _vehicles,
+          lastUpdateAt: vehiclesUpdatedAt,
           connectionMode: tripConnectionMode,
           connectionError: tripConnectionError,
-          vehicles: _vehicles,
+          proximityState: _proximityState,
           onBack: () => setState(() => tripMinimized = true),
           onExit: () => unawaited(_endTrip()),
         ),
@@ -189,13 +261,18 @@ class _MapScreenState extends State<MapScreen> {
     }
     if (selectedRoute != null && routeFocused) {
       return FocusedRouteView(
-          route: selectedRoute!,
-          userPosition: userPosition,
-          locationAccuracy: locationAccuracy,
-          isLiveLocation: userPosition != null,
-          onBack: () => setState(() {
+        route: selectedRoute!,
+        userPosition: userPosition,
+        locationAccuracy: locationAccuracy,
+        isLiveLocation: userPosition != null,
+        vehicles: routeVehicles,
+        lastUpdateAt: vehiclesUpdatedAt,
+        proximityState: _proximityState,
+        onConfirmBoarding: () => _showBoardingSheet(context),
+        onBack: () => setState(() {
           selectedRoute = null;
           routeFocused = false;
+          _clearRouteStream();
         }),
         onBoarding: () {
           if (activeTrip) {
@@ -213,6 +290,8 @@ class _MapScreenState extends State<MapScreen> {
         userPosition: userPosition,
         locationAccuracy: locationAccuracy,
         isLiveLocation: userPosition != null,
+        vehicles: routeVehicles,
+        lastUpdateAt: vehiclesUpdatedAt,
         onBack: () => setState(() => routeFocused = false),
       );
     }
@@ -367,12 +446,13 @@ class RouteSelectionView extends StatelessWidget {
       builder: (context, constraints) {
         final isCompact = constraints.maxWidth < 360;
         final horizontal = isCompact ? 16.0 : 22.0;
-        final subtitle = locationError ??
+        final subtitle =
+            locationError ??
             (hasLocalLocation
                 ? 'Ubicación real activa · rutas cercanas ordenadas por distancia'
                 : isLoadingReal
-                    ? 'Sin destino obligatorio · cargando datos OSM…'
-                    : 'Activa la ubicación para detectar rutas cercanas · $totalCount rutas');
+                ? 'Sin destino obligatorio · cargando datos OSM…'
+                : 'Activa la ubicación para detectar rutas cercanas · $totalCount rutas');
         return Column(
           children: [
             Expanded(
@@ -638,6 +718,8 @@ class MapOverviewView extends StatelessWidget {
     this.userPosition,
     this.locationAccuracy,
     this.isLiveLocation = false,
+    this.vehicles = const [],
+    this.lastUpdateAt,
     super.key,
   });
 
@@ -646,6 +728,8 @@ class MapOverviewView extends StatelessWidget {
   final LatLng? userPosition;
   final double? locationAccuracy;
   final bool isLiveLocation;
+  final List<VehicleUpdate> vehicles;
+  final DateTime? lastUpdateAt;
 
   @override
   Widget build(BuildContext context) {
@@ -663,6 +747,9 @@ class MapOverviewView extends StatelessWidget {
                     userPosition: userPosition,
                     locationAccuracy: locationAccuracy,
                     isLiveLocation: isLiveLocation,
+                    vehicles: vehicles,
+                    showFreshnessInfo: vehicles.isNotEmpty,
+                    lastUpdateAt: lastUpdateAt,
                   ),
                 ),
                 Positioned(
@@ -828,6 +915,10 @@ class FocusedRouteView extends StatefulWidget {
     this.userPosition,
     this.locationAccuracy,
     this.isLiveLocation = false,
+    this.vehicles = const [],
+    this.lastUpdateAt,
+    this.proximityState = BoardingState.empty,
+    this.onConfirmBoarding,
     super.key,
   });
 
@@ -838,41 +929,26 @@ class FocusedRouteView extends StatefulWidget {
   final LatLng? userPosition;
   final double? locationAccuracy;
   final bool isLiveLocation;
+  final List<VehicleUpdate> vehicles;
+  final DateTime? lastUpdateAt;
+  final BoardingState proximityState;
+  final VoidCallback? onConfirmBoarding;
 
   @override
   State<FocusedRouteView> createState() => _FocusedRouteViewState();
 }
 
 class _FocusedRouteViewState extends State<FocusedRouteView> {
-  List<StopWithCoords> _stops = [];
-
-  @override
-  void initState() {
-    super.initState();
-    _loadStops();
-  }
-
-  @override
-  void didUpdateWidget(FocusedRouteView oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.route.id != widget.route.id) {
-      _loadStops();
-    }
-  }
-
-  Future<void> _loadStops() async {
-    final stops = await StopsWithCoordsExtension.stopsWithCoordsFor(widget.route);
-    if (mounted) {
-      setState(() => _stops = stops);
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final compact = MediaQuery.sizeOf(context).width < 360;
     final isReal = widget.route.tieneGeometriaReal;
     final simEta = isReal
-        ? DemoSimulation().etaFor(widget.route.polyline!, 0.4).label
+        ? EtaEngine.forRoute(
+            route: widget.route,
+            userPosition: widget.userPosition,
+            vehicles: widget.vehicles,
+          ).label
         : '4-6 min';
     return SizedBox.expand(
       child: Stack(
@@ -883,7 +959,9 @@ class _FocusedRouteViewState extends State<FocusedRouteView> {
               userPosition: widget.userPosition,
               locationAccuracy: widget.locationAccuracy,
               isLiveLocation: widget.isLiveLocation,
-              stops: _stops,
+              vehicles: widget.vehicles,
+              showFreshnessInfo: widget.vehicles.isNotEmpty,
+              lastUpdateAt: widget.lastUpdateAt,
             ),
           ),
           Positioned(
@@ -902,7 +980,9 @@ class _FocusedRouteViewState extends State<FocusedRouteView> {
                   ConstrainedBox(
                     constraints: const BoxConstraints(maxWidth: 150),
                     child: Text(
-                      isReal ? widget.route.name : '${widget.route.id} · Centro',
+                      isReal
+                          ? widget.route.name
+                          : '${widget.route.id} · Centro',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
@@ -966,6 +1046,17 @@ class _FocusedRouteViewState extends State<FocusedRouteView> {
               ),
             ),
           ),
+          if (widget.proximityState.primaryEvent != null)
+            Positioned(
+              left: 16,
+              right: 16,
+              top: compact ? 145 : 160,
+              child: ProximityBanner(
+                state: widget.proximityState,
+                onConfirmBoarding: widget.onConfirmBoarding,
+                onDismiss: () => setState(() {}),
+              ),
+            ),
           DraggableScrollableSheet(
             initialChildSize: 0.20,
             minChildSize: 0.16,
@@ -996,42 +1087,48 @@ class _FocusedRouteViewState extends State<FocusedRouteView> {
                     ),
                     const SizedBox(height: 14),
                     const Text(
-                      'Paradas en secuencia',
+                      'Abordaje flexible',
                       style: TextStyle(
                         fontSize: 20,
                         fontWeight: FontWeight.w800,
                       ),
                     ),
-                    if (isReal)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 4),
-                        child: Text(
-                          'Trazo OSM · estimado',
-                          style: const TextStyle(
-                            color: AppColors.muted,
-                            fontSize: 12,
-                          ),
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Text(
+                        'Puedes abordar en un punto seguro sobre el recorrido.',
+                        style: const TextStyle(
+                          color: AppColors.muted,
+                          fontSize: 12,
                         ),
                       ),
+                    ),
                     const SizedBox(height: 12),
-                    if (widget.route.paradasCount == 0)
-                      const _StopsUnavailableCard()
-                    else
-                      FutureBuilder<List<StopInfo>>(
-                        future: RoutesRepository.stopsFor(widget.route),
-                        builder: (context, snapshot) {
-                          final stops = snapshot.data ?? const <StopInfo>[];
-                          if (stops.isEmpty) {
-                            return const _StopsUnavailableCard();
-                          }
-                          return Column(
-                            children: [
-                              for (final stop in stops)
-                                StopTimelineItem(stop: stop),
-                            ],
-                          );
-                        },
+                    SoftCard(
+                      padding: const EdgeInsets.all(16),
+                      color: const Color(0xFFE1F4E8),
+                      borderColor: const Color(0xFF9ED5B6),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Icon(
+                            Icons.signpost_outlined,
+                            color: AppColors.green,
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              'Las combis y autobuses pueden detenerse cerca de cualquier esquina. Busca una zona segura sobre la ruta y confirma cuando la unidad se aproxime.',
+                              style: TextStyle(
+                                color: AppColors.ink,
+                                fontSize: 14,
+                                height: 1.35,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
+                    ),
                     const SizedBox(height: 12),
                     OutlinedButton.icon(
                       onPressed: widget.onService,
@@ -1145,35 +1242,6 @@ class StopTimelineItem extends StatelessWidget {
                 ),
               ),
             ),
-        ],
-      ),
-    );
-  }
-}
-
-class _StopsUnavailableCard extends StatelessWidget {
-  const _StopsUnavailableCard();
-
-  @override
-  Widget build(BuildContext context) {
-    return SoftCard(
-      color: AppColors.creamDark,
-      borderColor: AppColors.creamDark,
-      padding: const EdgeInsets.all(16),
-      child: Row(
-        children: [
-          const Icon(Icons.alt_route, color: AppColors.muted),
-          const SizedBox(width: 12),
-          const Expanded(
-            child: Text(
-              'Las paradas de esta ruta aún no están asociadas en el dataset.',
-              style: TextStyle(
-                color: AppColors.muted,
-                fontSize: 14,
-                height: 1.35,
-              ),
-            ),
-          ),
         ],
       ),
     );
@@ -1357,10 +1425,12 @@ class ActiveTripView extends StatelessWidget {
     this.userPosition,
     this.locationAccuracy,
     this.isLiveLocation = false,
+    this.vehicles = const [],
+    this.lastUpdateAt,
     required this.onExit,
     required this.onBack,
     this.connectionError,
-    this.vehicles = const [],
+    this.proximityState = BoardingState.empty,
     super.key,
   });
 
@@ -1369,8 +1439,10 @@ class ActiveTripView extends StatelessWidget {
   final LatLng? userPosition;
   final double? locationAccuracy;
   final bool isLiveLocation;
-  final String? connectionError;
   final List<VehicleUpdate> vehicles;
+  final DateTime? lastUpdateAt;
+  final String? connectionError;
+  final BoardingState proximityState;
   final VoidCallback onExit;
   final VoidCallback onBack;
 
@@ -1449,7 +1521,7 @@ class ActiveTripView extends StatelessWidget {
                           Text(
                             // ETA is estimated, don't invent stops
                             route.tieneGeometriaReal
-                                ? 'ETA estimado · ${DemoSimulation().etaFor(route.polyline!, 0.4).label}'
+                                ? 'ETA estimado · ${EtaEngine.forRoute(route: route, userPosition: userPosition, vehicles: vehicles).label}'
                                 : 'Sin datos de paradas',
                             style: const TextStyle(
                               color: Colors.white70,
@@ -1461,6 +1533,11 @@ class ActiveTripView extends StatelessWidget {
                     ),
                   ],
                 ),
+                if (proximityState.primaryEvent != null)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                    child: ProximityBanner(state: proximityState),
+                  ),
                 const SizedBox(height: 27),
                 ClipRRect(
                   borderRadius: BorderRadius.circular(20),
@@ -1479,11 +1556,12 @@ class ActiveTripView extends StatelessWidget {
                       'Inicio',
                       style: TextStyle(color: Colors.white70, fontSize: 16),
                     ),
-                    Text(
-                      route.paradasCount > 0
-                          ? '${route.paradasCount} paradas · OSM'
-                          : 'Sin paradas registradas',
-                      style: const TextStyle(color: Colors.white70, fontSize: 16),
+                    const Text(
+                      'Abordaje flexible · recorrido OSM',
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 16,
+                      ),
                     ),
                     const Text(
                       'Fin',
@@ -1503,7 +1581,9 @@ class ActiveTripView extends StatelessWidget {
             isLiveLocation: isLiveLocation,
             vehicles: vehicles,
             showFreshnessInfo: vehicles.isNotEmpty,
-            lastUpdateAt: vehicles.isNotEmpty ? vehicles.first.lastUpdateAt : null,
+            lastUpdateAt: vehicles.isNotEmpty
+                ? vehicles.first.lastUpdateAt
+                : null,
           ),
           Padding(
             padding: const EdgeInsets.all(22),
