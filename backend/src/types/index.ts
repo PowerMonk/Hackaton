@@ -26,6 +26,19 @@ export interface GeoJSONPoint {
 // Route Types
 // ============================================================================
 
+export interface RouteDirection {
+  /** Human-readable direction label (e.g., "Hacia Centro", "Dirección Norte") */
+  label: string | null;
+  /** Cardinal direction (N, NE, E, SE, S, SW, W, NW) */
+  cardinal: string | null;
+  /** Origin label if derivable from route name */
+  originLabel: string | null;
+  /** Destination label if derivable from route name */
+  destinationLabel: string | null;
+  /** Heading in degrees (0-360, 0 = North) */
+  heading: number | null;
+}
+
 export interface Route {
   id: string;
   ref: string;
@@ -40,6 +53,8 @@ export interface Route {
   geometry: GeoJSONMultiLineString;
   totalLengthM: number;
   createdAt: Date;
+  /** Direction information derived from geometry (null if insufficient data) */
+  direction?: RouteDirection | null;
 }
 
 export interface RouteWithVehicles extends Route {

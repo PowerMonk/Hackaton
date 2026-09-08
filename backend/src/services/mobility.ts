@@ -13,7 +13,11 @@ import type {
   MobilityState,
 } from "../types";
 import { getSimulation } from "../simulation/engine";
-import { calculateEta as calculateEtaEstimate } from "./eta";
+import {
+  calculateEta as calculateEtaEstimate,
+  selectBestVehicleEta,
+  type VehicleCandidate,
+} from "./eta";
 import {
   clusterVehicleObservations,
   type VehicleCluster,
@@ -633,13 +637,22 @@ export async function calculateStopEta(
   const stopProgress = Number(routeMatch[0].progress);
   const routeLengthM = Number(routeMatch[0].route_length_m);
 
-  // Get vehicles approaching this stop
-  const vehicles = await getVirtualVehicles(matchedRouteId);
-  const approachingVehicles = vehicles
-    .filter((v) => v.progress < stopProgress)
-    .sort((a, b) => b.progress - a.progress);
+  if (!Number.isFinite(routeLengthM) || routeLengthM <= 0) {
+    return {
+      minMinutes: 5,
+      maxMinutes: 15,
+      label: "5-15 min",
+      confidence: "Baja",
+      vehicleId: null,
+      stale: true,
+      calculatedAt: new Date(),
+    };
+  }
 
-  if (approachingVehicles.length === 0) {
+  // Get all vehicles on this route
+  const vehicles = await getVirtualVehicles(matchedRouteId);
+
+  if (vehicles.length === 0) {
     return {
       minMinutes: 10,
       maxMinutes: 20,
@@ -651,70 +664,60 @@ export async function calculateStopEta(
     };
   }
 
-  const nearestVehicle = approachingVehicles[0];
-  if (nearestVehicle.isSimulated || isDemoMode()) {
-    const simulation = getSimulation();
-    const eta = simulation.calculateEta(
-      matchedRouteId,
-      nearestVehicle.progress,
-      stopProgress
-    );
-
-    if (!eta) {
+  // Convert to VehicleCandidate format for multi-vehicle selection
+  const candidates: VehicleCandidate[] = await Promise.all(
+    vehicles.map(async (v) => {
+      const speedHistory = v.isSimulated ? [] : await getVehicleSpeedHistory(v.id);
       return {
-        minMinutes: 5,
-        maxMinutes: 15,
-        label: "5-15 min",
-        confidence: "Baja",
-        vehicleId: nearestVehicle.id,
-        stale: false,
-        calculatedAt: new Date(),
+        id: v.id,
+        progress: v.progress,
+        speedKmh: v.speed,
+        speedHistoryKmh: speedHistory,
+        lastObservedAt: v.lastUpdateAt,
+        state: v.state ?? (v.speed < 3 ? "paused" : "moving"),
+        passengerCount: v.passengerCount,
       };
+    })
+  );
+
+  // Count estimated stops along the route (for dwell time calculation)
+  const stopsOnRoute = await getStopCountForRoute(matchedRouteId);
+
+  // Use the new multi-vehicle ETA selection
+  const bestEta = selectBestVehicleEta(
+    candidates,
+    stopProgress,
+    routeLengthM,
+    matchedRouteId,
+    {
+      allowNextLoop: true,
+      stopsPerRoute: stopsOnRoute,
+      dwellSeconds: 20, // Average dwell time per stop
+      minMovingSpeedKmh: 3,
+      fallbackSpeedKmh: 15,
     }
+  );
 
+  if (!bestEta) {
     return {
-      minMinutes: eta.minMinutes,
-      maxMinutes: eta.maxMinutes,
-      label: `${eta.minMinutes}-${eta.maxMinutes} min`,
-      confidence: eta.confidence as "Alta" | "Media" | "Baja",
-      vehicleId: nearestVehicle.id,
-      stale: false,
-      calculatedAt: new Date(),
-    };
-  }
-
-  if (!Number.isFinite(routeLengthM) || routeLengthM <= 0) {
-    return {
-      minMinutes: 5,
-      maxMinutes: 15,
-      label: "5-15 min",
+      minMinutes: 10,
+      maxMinutes: 20,
+      label: "10-20 min",
       confidence: "Baja",
-      vehicleId: nearestVehicle.id,
+      vehicleId: null,
       stale: true,
       calculatedAt: new Date(),
     };
   }
 
-  const speedHistory = await getVehicleSpeedHistory(nearestVehicle.id);
-  const eta = calculateEtaEstimate({
-    routeId: matchedRouteId,
-    vehicleId: nearestVehicle.id,
-    fromProgress: nearestVehicle.progress,
-    targetProgress: stopProgress,
-    routeLengthM,
-    speedKmh: nearestVehicle.speed,
-    speedHistoryKmh: speedHistory,
-    lastObservedAt: nearestVehicle.lastUpdateAt,
-  });
-
   return {
-    minMinutes: eta.minMinutes,
-    maxMinutes: eta.maxMinutes,
-    label: `${eta.minMinutes}-${eta.maxMinutes} min`,
-    confidence: eta.confidence as "Alta" | "Media" | "Baja",
-    vehicleId: nearestVehicle.id,
-    stale: false,
-    calculatedAt: new Date(),
+    minMinutes: bestEta.minMinutes,
+    maxMinutes: bestEta.maxMinutes,
+    label: bestEta.label,
+    confidence: bestEta.confidence,
+    vehicleId: bestEta.vehicleId,
+    stale: bestEta.stale,
+    calculatedAt: bestEta.calculatedAt,
   };
 }
 
@@ -734,6 +737,18 @@ async function getVehicleSpeedHistory(vehicleId: string): Promise<number[]> {
     .map((row) => Number(row.inferred_speed))
     .filter((speed) => Number.isFinite(speed) && speed >= 0)
     .reverse();
+}
+
+async function getStopCountForRoute(routeId: string): Promise<number> {
+  const result = await sql`
+    SELECT COUNT(*) as count
+    FROM route_stops
+    WHERE route_id = ${routeId}
+  `;
+
+  const count = Number(result[0]?.count ?? 0);
+  // Return at least 5 stops as a minimum estimate
+  return Math.max(5, count);
 }
 
 // ============================================================================

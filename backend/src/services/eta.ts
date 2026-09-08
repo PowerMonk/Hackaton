@@ -161,13 +161,216 @@ function toTimestampMs(timestamp: EtaTimestamp): number {
   return Math.abs(timestamp) < 10_000_000_000 ? timestamp * 1000 : timestamp;
 }
 
+// ============================================================================
+// Multi-Vehicle ETA Selection
+// ============================================================================
+
+export interface VehicleCandidate {
+  id: string;
+  progress: number;
+  speedKmh: number;
+  speedHistoryKmh?: readonly number[];
+  lastObservedAt: EtaTimestamp;
+  state?: "moving" | "paused" | "dwelling" | "stopped";
+  passengerCount?: number;
+}
+
+export interface BestVehicleEtaOptions extends EtaOptions {
+  /** Consider next loop if all vehicles are past target */
+  allowNextLoop?: boolean;
+  /** Average stops per full route (for dwell calculation) */
+  stopsPerRoute?: number;
+  /** Minimum speed to consider vehicle as moving (km/h) */
+  minMovingSpeedKmh?: number;
+}
+
+export interface BestVehicleEtaResult extends EtaEstimate {
+  /** All candidates considered with their individual ETAs */
+  allCandidates: Array<{
+    vehicleId: string;
+    eta: EtaEstimate;
+    isNextLoop: boolean;
+  }>;
+  /** True if best ETA is from a vehicle completing a loop */
+  isNextLoop: boolean;
+}
+
+/**
+ * Selects the vehicle with the shortest ETA to reach target progress.
+ *
+ * Rules:
+ * 1. Only considers vehicles BEFORE the target (progress < targetProgress)
+ * 2. Prefers moving vehicles over paused/dwelling
+ * 3. If all vehicles are past target and allowNextLoop=true, considers next loop
+ * 4. Returns the candidate with minimum ETA
+ */
+export function selectBestVehicleEta(
+  candidates: readonly VehicleCandidate[],
+  targetProgress: number,
+  routeLengthM: number,
+  routeId: string,
+  options: BestVehicleEtaOptions = {}
+): BestVehicleEtaResult | null {
+  if (candidates.length === 0) return null;
+
+  const now = options.now ?? Date.now();
+  const allowNextLoop = options.allowNextLoop ?? true;
+  const stopsPerRoute = options.stopsPerRoute ?? 10;
+  const minMovingSpeed = options.minMovingSpeedKmh ?? 3;
+  const dwellPerStop = options.dwellSeconds ?? 20;
+
+  const allCandidatesWithEta: Array<{
+    vehicleId: string;
+    eta: EtaEstimate;
+    isNextLoop: boolean;
+    isMoving: boolean;
+  }> = [];
+
+  // Calculate ETA for each candidate
+  for (const candidate of candidates) {
+    const isMoving = candidate.speedKmh >= minMovingSpeed &&
+      candidate.state !== "paused" &&
+      candidate.state !== "dwelling" &&
+      candidate.state !== "stopped";
+
+    // Check if vehicle is before target
+    if (candidate.progress < targetProgress) {
+      // Vehicle is approaching target - calculate direct ETA
+      const stopsToPass = Math.round((targetProgress - candidate.progress) * stopsPerRoute);
+      const totalDwellSeconds = stopsToPass * dwellPerStop;
+
+      const eta = calculateEta({
+        routeId,
+        vehicleId: candidate.id,
+        fromProgress: candidate.progress,
+        targetProgress,
+        routeLengthM,
+        speedKmh: candidate.speedKmh,
+        speedHistoryKmh: candidate.speedHistoryKmh,
+        lastObservedAt: candidate.lastObservedAt,
+      }, {
+        ...options,
+        now,
+        dwellSeconds: totalDwellSeconds,
+      });
+
+      // Penalize paused/dwelling vehicles (they have 0 speed, so ETA would be huge)
+      // Instead, use fallback speed but mark as lower confidence
+      if (!isMoving && candidate.speedKmh < minMovingSpeed) {
+        // Recalculate with fallback speed
+        const adjustedEta = calculateEta({
+          routeId,
+          vehicleId: candidate.id,
+          fromProgress: candidate.progress,
+          targetProgress,
+          routeLengthM,
+          speedKmh: options.fallbackSpeedKmh ?? DEFAULT_ETA_OPTIONS.fallbackSpeedKmh,
+          speedHistoryKmh: [],
+          lastObservedAt: candidate.lastObservedAt,
+        }, {
+          ...options,
+          now,
+          dwellSeconds: totalDwellSeconds,
+        });
+        adjustedEta.confidence = "Baja";
+        adjustedEta.label = `~${adjustedEta.minMinutes}-${adjustedEta.maxMinutes} min (pausado)`;
+
+        allCandidatesWithEta.push({
+          vehicleId: candidate.id,
+          eta: adjustedEta,
+          isNextLoop: false,
+          isMoving: false,
+        });
+      } else {
+        allCandidatesWithEta.push({
+          vehicleId: candidate.id,
+          eta,
+          isNextLoop: false,
+          isMoving,
+        });
+      }
+    } else if (allowNextLoop) {
+      // Vehicle is past target - calculate next loop ETA
+      // Distance = (1 - current progress) + targetProgress (full loop)
+      const loopProgress = (1 - candidate.progress) + targetProgress;
+      const stopsToPass = Math.round(loopProgress * stopsPerRoute);
+      const totalDwellSeconds = stopsToPass * dwellPerStop;
+
+      const eta = calculateEta({
+        routeId,
+        vehicleId: candidate.id,
+        fromProgress: 0,
+        targetProgress: loopProgress,
+        routeLengthM,
+        speedKmh: candidate.speedKmh > minMovingSpeed ? candidate.speedKmh : (options.fallbackSpeedKmh ?? DEFAULT_ETA_OPTIONS.fallbackSpeedKmh),
+        speedHistoryKmh: candidate.speedHistoryKmh,
+        lastObservedAt: candidate.lastObservedAt,
+      }, {
+        ...options,
+        now,
+        dwellSeconds: totalDwellSeconds,
+      });
+
+      // Mark as next loop
+      eta.label = `${eta.minMinutes}-${eta.maxMinutes} min (siguiente vuelta)`;
+      eta.confidence = eta.confidence === "Alta" ? "Media" : "Baja";
+
+      allCandidatesWithEta.push({
+        vehicleId: candidate.id,
+        eta,
+        isNextLoop: true,
+        isMoving,
+      });
+    }
+  }
+
+  if (allCandidatesWithEta.length === 0) return null;
+
+  // Sort by:
+  // 1. Prefer moving vehicles
+  // 2. Prefer non-next-loop
+  // 3. Minimum ETA
+  allCandidatesWithEta.sort((a, b) => {
+    // Moving vehicles first
+    if (a.isMoving !== b.isMoving) return a.isMoving ? -1 : 1;
+    // Non-next-loop first
+    if (a.isNextLoop !== b.isNextLoop) return a.isNextLoop ? 1 : -1;
+    // Then by minimum ETA
+    return a.eta.minMinutes - b.eta.minMinutes;
+  });
+
+  const best = allCandidatesWithEta[0];
+
+  return {
+    ...best.eta,
+    allCandidates: allCandidatesWithEta.map(c => ({
+      vehicleId: c.vehicleId,
+      eta: c.eta,
+      isNextLoop: c.isNextLoop,
+    })),
+    isNextLoop: best.isNextLoop,
+  };
+}
+
+/**
+ * Calculates ETA to a stop, considering all vehicles on the route.
+ * Returns the best (fastest) option.
+ */
+export function calculateStopEtaFromVehicles(
+  vehicles: readonly VehicleCandidate[],
+  stopProgress: number,
+  routeLengthM: number,
+  routeId: string,
+  options: BestVehicleEtaOptions = {}
+): BestVehicleEtaResult | null {
+  return selectBestVehicleEta(vehicles, stopProgress, routeLengthM, routeId, options);
+}
+
 /**
  * Integration with mobility.ts:
  * 1. Resolve the stop's route progress and route totalLengthM in the existing
  *    SQL layer.
- * 2. Convert a VehicleCluster (or VirtualVehicle) to EtaInput, passing its
- *    recent speeds as speedHistoryKmh and using one request timestamp.
- * 3. Call calculateEta with the configured stop dwell time.
- * 4. Return EtaEstimate directly: its core fields are structurally compatible
- *    with EtaResult; persistence and HTTP mapping stay outside this module.
+ * 2. Get all VirtualVehicles for the route
+ * 3. Convert to VehicleCandidate[] and call selectBestVehicleEta
+ * 4. Return BestVehicleEtaResult with all candidates considered
  */

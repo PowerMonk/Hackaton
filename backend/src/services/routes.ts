@@ -6,6 +6,12 @@
 import { sql } from "../db/connection";
 import type { Route, RouteWithVehicles, Stop } from "../types";
 import { getVirtualVehicles } from "./mobility";
+import {
+  getRouteDirection,
+  formatDirectionLabel,
+  hasValidDirection,
+  type RouteDirectionInfo,
+} from "./direction";
 
 // Color palette matching Flutter app
 const ROUTE_COLORS = [
@@ -38,21 +44,45 @@ export async function getAllRoutes(): Promise<Route[]> {
     LIMIT 1000
   `;
 
-  return result.map((row) => ({
-    id: row.id,
-    ref: row.ref,
-    name: row.name,
+  return result.map((row) => mapRouteRow(row));
+}
+
+function mapRouteRow(row: Record<string, unknown>): Route {
+  const geometry = row.geometry as Route["geometry"];
+  const name = row.name as string;
+
+  // Derive direction from geometry (does NOT invent - returns null if insufficient data)
+  const directionInfo = getRouteDirection(
+    geometry?.coordinates ?? null,
+    { name }
+  );
+
+  const direction = hasValidDirection(directionInfo)
+    ? {
+        label: formatDirectionLabel(directionInfo),
+        cardinal: directionInfo.overallDirection?.cardinal ?? null,
+        originLabel: directionInfo.originLabel,
+        destinationLabel: directionInfo.destinationLabel,
+        heading: directionInfo.overallDirection?.heading ?? null,
+      }
+    : null;
+
+  return {
+    id: row.id as string,
+    ref: row.ref as string,
+    name,
     mode: row.mode as Route["mode"],
-    color: row.color,
-    osmId: row.osm_id,
-    variantes: row.variantes,
-    paradasCount: row.paradas_count,
-    sinNombre: row.sin_nombre,
+    color: row.color as string,
+    osmId: row.osm_id as number | null,
+    variantes: row.variantes as number,
+    paradasCount: row.paradas_count as number,
+    sinNombre: row.sin_nombre as boolean,
     fuente: row.fuente as Route["fuente"],
-    geometry: row.geometry,
-    totalLengthM: row.total_length_m,
-    createdAt: row.created_at,
-  }));
+    geometry,
+    totalLengthM: row.total_length_m as number,
+    createdAt: row.created_at as Date,
+    direction,
+  };
 }
 
 export async function getRouteById(routeId: string): Promise<Route | null> {
@@ -69,23 +99,7 @@ export async function getRouteById(routeId: string): Promise<Route | null> {
   `;
 
   if (result.length === 0) return null;
-
-  const row = result[0];
-  return {
-    id: row.id,
-    ref: row.ref,
-    name: row.name,
-    mode: row.mode as Route["mode"],
-    color: row.color,
-    osmId: row.osm_id,
-    variantes: row.variantes,
-    paradasCount: row.paradas_count,
-    sinNombre: row.sin_nombre,
-    fuente: row.fuente as Route["fuente"],
-    geometry: row.geometry,
-    totalLengthM: row.total_length_m,
-    createdAt: row.created_at,
-  };
+  return mapRouteRow(result[0]);
 }
 
 export async function getRouteWithVehicles(
