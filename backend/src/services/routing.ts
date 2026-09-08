@@ -12,6 +12,15 @@ import type {
 } from "../types";
 import { getAllRoutes, getStopsNearPoint } from "./routes";
 
+interface OsrmResponse {
+  code?: string;
+  routes?: Array<{
+    distance: number;
+    duration: number;
+    geometry: GeoJSONLineString;
+  }>;
+}
+
 const OSRM_BASE_URL = process.env.OSRM_BASE_URL || "https://router.project-osrm.org";
 
 // Walking speed estimate: 5 km/h
@@ -281,7 +290,7 @@ async function osrmRoute(
     throw new Error(`OSRM error: ${response.status}`);
   }
 
-  const data = await response.json();
+  const data = (await response.json()) as OsrmResponse;
 
   if (data.code !== "Ok" || !data.routes || data.routes.length === 0) {
     return null;

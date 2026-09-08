@@ -3,7 +3,7 @@
 // Seeds initial demo data for testing
 // ============================================================================
 
-import { db, testConnection } from "./connection";
+import { sql, testConnection } from "./connection";
 import { getSimulation } from "../simulation/engine";
 import { getAllRoutes } from "../services/routes";
 
@@ -40,7 +40,7 @@ async function main() {
     const deviceId = `demo-device-${route.id.replace(/\s/g, "-")}`;
 
     try {
-      await db.query`
+      await sql`
         INSERT INTO boarding_sessions (
           route_id,
           device_id,
@@ -76,7 +76,7 @@ async function main() {
 
   for (const vehicle of vehicles) {
     try {
-      await db.query`
+      await sql`
         INSERT INTO virtual_vehicles (
           id,
           route_id,
@@ -113,10 +113,10 @@ async function main() {
   console.log(`✓ Created ${vehicles.length} virtual vehicles\n`);
 
   // Summary
-  const sessionCount = await db.query`
+  const sessionCount = await sql`
     SELECT COUNT(*) as count FROM boarding_sessions WHERE ended_at IS NULL
   `;
-  const vehicleCount = await db.query`
+  const vehicleCount = await sql`
     SELECT COUNT(*) as count FROM virtual_vehicles
   `;
 

@@ -5,7 +5,7 @@
 
 import { sql } from "../db/connection";
 import type { Route, RouteWithVehicles, Stop } from "../types";
-import { getSimulation } from "../simulation/engine";
+import { getVirtualVehicles } from "./mobility";
 
 // Color palette matching Flutter app
 const ROUTE_COLORS = [
@@ -35,6 +35,7 @@ export async function getAllRoutes(): Promise<Route[]> {
       created_at
     FROM routes
     ORDER BY name
+    LIMIT 1000
   `;
 
   return result.map((row) => ({
@@ -93,8 +94,7 @@ export async function getRouteWithVehicles(
   const route = await getRouteById(routeId);
   if (!route) return null;
 
-  const simulation = getSimulation();
-  const vehicles = simulation.getRouteVehicles(routeId);
+  const vehicles = await getVirtualVehicles(routeId);
 
   const activePassengers = vehicles.reduce(
     (sum, v) => sum + v.passengerCount,
@@ -124,6 +124,7 @@ export async function getAllStops(): Promise<Stop[]> {
     LEFT JOIN route_stops rs ON s.id = rs.stop_id
     GROUP BY s.id
     ORDER BY s.name NULLS LAST
+    LIMIT 1000
   `;
 
   return result.map((row) => ({

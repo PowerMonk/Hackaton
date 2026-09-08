@@ -1,8 +1,8 @@
 /// Contratos del backend Bun/PostGIS (ver `context.md` → API Surface).
 ///
-/// En v0.1 son solo firmas documentadas: la app usa datos locales
-/// ([RoutesRepository]) y simulación ([DemoSimulation]).
-/// Persona 2 implementará estos endpoints sin cambiar la UI.
+/// Las implementaciones concretas viven en [mobility_api.dart]. La UI solo
+/// depende de este contrato para poder caer a DEMO cuando LIVE no está
+/// disponible.
 ///
 /// ```http
 /// GET /health
@@ -21,14 +21,14 @@
 /// WS /ws/mobility
 /// ```
 enum AppMode {
-  /// GPS real Android tras confirmar abordaje (futuro).
+  /// GPS real después de confirmar abordaje.
   live,
 
-  /// Replay determinista local (actual v0.1).
+  /// Replay determinista local.
   demo,
 }
 
-abstract class MobilityApi {
+abstract interface class MobilityApi {
   Future<List<Map<String, dynamic>>> getRoutes();
   Future<Map<String, dynamic>> getRoute(String routeId);
   Future<List<Map<String, dynamic>>> getVehicles(String routeId);
@@ -36,4 +36,25 @@ abstract class MobilityApi {
   Future<String> openBoardingSession(String routeId);
   Future<void> closeBoardingSession(String sessionId);
   Future<void> postLocation(Map<String, dynamic> sample);
+  Stream<Map<String, dynamic>> watchRoute(String routeId);
+}
+
+/// Optional capability so existing API fakes do not need to implement planner
+/// calls until a test or feature uses them.
+abstract interface class RoutePlanningApi {
+  Future<Map<String, dynamic>> planRoute(Map<String, dynamic> request);
+}
+
+extension MobilityApiPlanning on MobilityApi {
+  Future<Map<String, dynamic>> planRoute(Map<String, dynamic> request) {
+    if (this case final RoutePlanningApi planner) {
+      return planner.planRoute(request);
+    }
+    try {
+      final dynamic result = (this as dynamic).planRoute(request);
+      return result as Future<Map<String, dynamic>>;
+    } on NoSuchMethodError {
+      throw UnimplementedError('Route planning is not available');
+    }
+  }
 }

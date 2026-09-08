@@ -1,9 +1,17 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:latlong2/latlong.dart';
 
 import '../data/demo_data.dart';
 import '../data/demo_simulation.dart';
+import '../data/api_contracts.dart';
+import '../data/location_source.dart';
+import '../data/mobility_api.dart';
 import '../data/routes_repository.dart';
+import '../data/trip_session.dart';
 import '../models/app_models.dart';
+import '../models/mobility_models.dart';
 import '../theme/app_theme.dart';
 import '../widgets/map_canvas.dart';
 import '../widgets/ui_components.dart';
@@ -18,6 +26,9 @@ class MapScreen extends StatefulWidget {
 }
 
 class _MapScreenState extends State<MapScreen> {
+  late final TripSessionController _tripSession;
+  late final GeolocatorLocationSource _localLocationSource;
+  StreamSubscription<LocationSample>? _localLocationSubscription;
   TransitRoute? selectedRoute;
   String selectedFilter = 'Cerca de mí';
   String query = '';
@@ -26,11 +37,83 @@ class _MapScreenState extends State<MapScreen> {
   bool activeTrip = false;
   bool tripMinimized = false;
   bool routeFocused = false;
+  TripConnectionMode tripConnectionMode = TripConnectionMode.demo;
+  String? tripConnectionError;
+  LatLng? userPosition;
+  double? locationAccuracy;
+  LocationPermissionState locationPermission = LocationPermissionState.denied;
+  String? locationError;
 
   @override
   void initState() {
     super.initState();
+    _localLocationSource = GeolocatorLocationSource();
+    _tripSession = TripSessionController(
+      api: HttpMobilityApi(),
+      locationSource: GeolocatorLocationSource(),
+      mode: ApiConfig.mode,
+      onError: _handleTripError,
+    );
     _loadRealRoutes();
+    unawaited(_startLocalLocation());
+  }
+
+  @override
+  void dispose() {
+    unawaited(_localLocationSubscription?.cancel());
+    unawaited(_localLocationSource.stop());
+    unawaited(_tripSession.stop());
+    super.dispose();
+  }
+
+  Future<void> _startLocalLocation() async {
+    try {
+      final permission = await _localLocationSource.requestPermission();
+      if (!mounted) return;
+      setState(() => locationPermission = permission);
+      if (permission != LocationPermissionState.granted) {
+        setState(() => locationError = _locationPermissionMessage(permission));
+        return;
+      }
+
+      final initial = await _localLocationSource.getCurrentLocation();
+      if (initial != null) _applyLocalLocation(initial);
+      _localLocationSubscription = _localLocationSource.locationStream.listen(
+        _applyLocalLocation,
+        onError: (Object error, StackTrace _) {
+          if (mounted) setState(() => locationError = error.toString());
+        },
+      );
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => locationError = 'No se pudo obtener la ubicación: $error');
+    }
+  }
+
+  void _applyLocalLocation(LocationSample sample) {
+    if (!mounted) return;
+    setState(() {
+      userPosition = LatLng(sample.latitude, sample.longitude);
+      locationAccuracy = sample.accuracy;
+      locationError = null;
+    });
+  }
+
+  static String _locationPermissionMessage(LocationPermissionState state) {
+    return switch (state) {
+      LocationPermissionState.denied =>
+        'Activa la ubicación para detectar rutas cercanas.',
+      LocationPermissionState.deniedForever =>
+        'La ubicación está bloqueada. Actívala desde Ajustes.',
+      LocationPermissionState.serviceDisabled =>
+        'Activa el GPS del teléfono para detectar rutas cercanas.',
+      LocationPermissionState.granted => '',
+    };
+  }
+
+  void _handleTripError(String message) {
+    if (!mounted) return;
+    setState(() => tripConnectionError = message);
   }
 
   Future<void> _loadRealRoutes() async {
@@ -63,6 +146,19 @@ class _MapScreenState extends State<MapScreen> {
       _ => List<TransitRoute>.from(routes),
     };
     list = RoutesRepository.search(list, query);
+    if (selectedFilter == 'Cerca de mí' && userPosition != null) {
+      final nearby = list
+          .map(
+            (route) => (
+              route: route,
+              distance: RoutesRepository.distanceToRoute(userPosition!, route),
+            ),
+          )
+          .where((item) => item.distance <= 1500)
+          .toList()
+        ..sort((a, b) => a.distance.compareTo(b.distance));
+      return [for (final item in nearby) item.route];
+    }
     return list;
   }
 
@@ -76,19 +172,23 @@ class _MapScreenState extends State<MapScreen> {
         },
         child: ActiveTripView(
           route: selectedRoute!,
+          userPosition: userPosition,
+          locationAccuracy: locationAccuracy,
+          isLiveLocation: userPosition != null,
+          connectionMode: tripConnectionMode,
+          connectionError: tripConnectionError,
           onBack: () => setState(() => tripMinimized = true),
-          onExit: () => setState(() {
-            activeTrip = false;
-            tripMinimized = false;
-            routeFocused = selectedRoute != null;
-          }),
+          onExit: () => unawaited(_endTrip()),
         ),
       );
     }
     if (selectedRoute != null && routeFocused) {
       return FocusedRouteView(
-        route: selectedRoute!,
-        onBack: () => setState(() {
+          route: selectedRoute!,
+          userPosition: userPosition,
+          locationAccuracy: locationAccuracy,
+          isLiveLocation: userPosition != null,
+          onBack: () => setState(() {
           selectedRoute = null;
           routeFocused = false;
         }),
@@ -105,6 +205,9 @@ class _MapScreenState extends State<MapScreen> {
     if (routeFocused) {
       return MapOverviewView(
         route: routes.isNotEmpty ? routes.first : demoRoutes.first,
+        userPosition: userPosition,
+        locationAccuracy: locationAccuracy,
+        isLiveLocation: userPosition != null,
         onBack: () => setState(() => routeFocused = false),
       );
     }
@@ -114,6 +217,8 @@ class _MapScreenState extends State<MapScreen> {
       routes: visibleRoutes,
       totalCount: routes.length,
       isLoadingReal: loadingReal,
+      hasLocalLocation: userPosition != null,
+      locationError: locationError,
       query: query,
       onQueryChanged: (q) => setState(() => query = q),
       onSelect: _selectRoute,
@@ -141,12 +246,65 @@ class _MapScreenState extends State<MapScreen> {
       backgroundColor: Colors.transparent,
       builder: (context) => BoardingSheet(route: selectedRoute!),
     );
-    if (boarded == true && mounted) {
-      setState(() {
-        activeTrip = true;
-        tripMinimized = false;
-      });
+    if (boarded != true || !mounted) return;
+
+    final shareLocation = ApiConfig.mode == AppMode.live
+        ? await _askToShareLocation()
+        : false;
+    if (!mounted) return;
+
+    final result = shareLocation
+        ? await _tripSession.start(selectedRoute!.id)
+        : const TripStartResult(mode: TripConnectionMode.localOnly);
+    if (!mounted) return;
+    setState(() {
+      activeTrip = true;
+      tripMinimized = false;
+      tripConnectionMode = result.mode;
+      tripConnectionError = result.error;
+    });
+    if (result.error != null) {
+      ScaffoldMessenger.of(
+        this.context,
+      ).showSnackBar(SnackBar(content: Text(result.error!)));
     }
+  }
+
+  Future<bool> _askToShareLocation() async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Compartir ubicación durante el viaje'),
+        content: const Text(
+          'Tu ubicación ya se usa localmente para mostrar rutas cercanas. '
+          '¿Deseas compartir muestras aproximadas para calcular ETA y mejorar '
+          'la información de transporte?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('No compartir'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Compartir'),
+          ),
+        ],
+      ),
+    );
+    return result == true;
+  }
+
+  Future<void> _endTrip() async {
+    await _tripSession.stop();
+    if (!mounted) return;
+    setState(() {
+      activeTrip = false;
+      tripMinimized = false;
+      routeFocused = selectedRoute != null;
+      tripConnectionMode = TripConnectionMode.demo;
+      tripConnectionError = null;
+    });
   }
 }
 
@@ -157,6 +315,8 @@ class RouteSelectionView extends StatelessWidget {
     required this.routes,
     required this.totalCount,
     required this.isLoadingReal,
+    required this.hasLocalLocation,
+    this.locationError,
     required this.query,
     required this.onQueryChanged,
     required this.onSelect,
@@ -171,6 +331,8 @@ class RouteSelectionView extends StatelessWidget {
   final List<TransitRoute> routes;
   final int totalCount;
   final bool isLoadingReal;
+  final bool hasLocalLocation;
+  final String? locationError;
   final String query;
   final ValueChanged<String> onQueryChanged;
   final ValueChanged<TransitRoute> onSelect;
@@ -184,9 +346,12 @@ class RouteSelectionView extends StatelessWidget {
       builder: (context, constraints) {
         final isCompact = constraints.maxWidth < 360;
         final horizontal = isCompact ? 16.0 : 22.0;
-        final subtitle = isLoadingReal
-            ? 'Sin destino obligatorio · cargando datos OSM…'
-            : 'Sin destino obligatorio · $totalCount rutas · datos OSM';
+        final subtitle = locationError ??
+            (hasLocalLocation
+                ? 'Ubicación real activa · rutas cercanas ordenadas por distancia'
+                : isLoadingReal
+                    ? 'Sin destino obligatorio · cargando datos OSM…'
+                    : 'Activa la ubicación para detectar rutas cercanas · $totalCount rutas');
         return Column(
           children: [
             Expanded(
@@ -446,10 +611,20 @@ class _RouteHeaderDelegate extends SliverPersistentHeaderDelegate {
 }
 
 class MapOverviewView extends StatelessWidget {
-  const MapOverviewView({required this.route, required this.onBack, super.key});
+  const MapOverviewView({
+    required this.route,
+    required this.onBack,
+    this.userPosition,
+    this.locationAccuracy,
+    this.isLiveLocation = false,
+    super.key,
+  });
 
   final TransitRoute route;
   final VoidCallback onBack;
+  final LatLng? userPosition;
+  final double? locationAccuracy;
+  final bool isLiveLocation;
 
   @override
   Widget build(BuildContext context) {
@@ -460,7 +635,15 @@ class MapOverviewView extends StatelessWidget {
             height: MediaQuery.sizeOf(context).height * 0.62,
             child: Stack(
               children: [
-                Positioned.fill(child: DemoMap(route: route, showRoute: false)),
+                Positioned.fill(
+                  child: DemoMap(
+                    route: route,
+                    showRoute: false,
+                    userPosition: userPosition,
+                    locationAccuracy: locationAccuracy,
+                    isLiveLocation: isLiveLocation,
+                  ),
+                ),
                 Positioned(
                   top: 22,
                   left: 18,
@@ -621,6 +804,9 @@ class FocusedRouteView extends StatelessWidget {
     required this.onBack,
     required this.onBoarding,
     required this.onService,
+    this.userPosition,
+    this.locationAccuracy,
+    this.isLiveLocation = false,
     super.key,
   });
 
@@ -628,6 +814,9 @@ class FocusedRouteView extends StatelessWidget {
   final VoidCallback onBack;
   final VoidCallback onBoarding;
   final VoidCallback onService;
+  final LatLng? userPosition;
+  final double? locationAccuracy;
+  final bool isLiveLocation;
 
   @override
   Widget build(BuildContext context) {
@@ -639,7 +828,14 @@ class FocusedRouteView extends StatelessWidget {
     return SizedBox.expand(
       child: Stack(
         children: [
-          Positioned.fill(child: DemoMap(route: route)),
+          Positioned.fill(
+            child: DemoMap(
+              route: route,
+              userPosition: userPosition,
+              locationAccuracy: locationAccuracy,
+              isLiveLocation: isLiveLocation,
+            ),
+          ),
           Positioned(
             top: 16,
             right: 16,
@@ -1107,17 +1303,40 @@ class BoardingSheet extends StatelessWidget {
 class ActiveTripView extends StatelessWidget {
   const ActiveTripView({
     required this.route,
+    required this.connectionMode,
+    this.userPosition,
+    this.locationAccuracy,
+    this.isLiveLocation = false,
     required this.onExit,
     required this.onBack,
+    this.connectionError,
     super.key,
   });
 
   final TransitRoute route;
+  final TripConnectionMode connectionMode;
+  final LatLng? userPosition;
+  final double? locationAccuracy;
+  final bool isLiveLocation;
+  final String? connectionError;
   final VoidCallback onExit;
   final VoidCallback onBack;
 
   @override
   Widget build(BuildContext context) {
+    final isLive = connectionMode == TripConnectionMode.live;
+    final sharingLabel = isLive
+        ? 'Compartiendo ubicación aproximada'
+        : connectionMode == TripConnectionMode.localOnly
+        ? 'Ubicación real · no compartida'
+        : 'Modo demostración · ubicación no compartida';
+    final sharingDetail =
+        connectionError ??
+        (isLive
+            ? 'Última actualización en vivo · muestreo adaptativo'
+            : connectionMode == TripConnectionMode.localOnly
+            ? 'GPS activo solo en este dispositivo'
+            : 'Datos locales deterministas · sin conexión al backend');
     return SingleChildScrollView(
       child: Column(
         children: [
@@ -1147,7 +1366,10 @@ class ActiveTripView extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(width: 8),
-                    const Icon(Icons.wifi, color: Colors.white),
+                    Icon(
+                      isLive ? Icons.wifi : Icons.wifi_off,
+                      color: Colors.white,
+                    ),
                   ],
                 ),
                 const SizedBox(height: 28),
@@ -1211,7 +1433,14 @@ class ActiveTripView extends StatelessWidget {
               ],
             ),
           ),
-          DemoMap(route: route, height: 390),
+          DemoMap(
+            route: route,
+            height: 390,
+            showDemoLabel: !isLiveLocation,
+            userPosition: userPosition,
+            locationAccuracy: locationAccuracy,
+            isLiveLocation: isLiveLocation,
+          ),
           Padding(
             padding: const EdgeInsets.all(22),
             child: Column(
@@ -1247,25 +1476,25 @@ class ActiveTripView extends StatelessWidget {
                 SoftCard(
                   color: AppColors.creamDark,
                   borderColor: AppColors.creamDark,
-                  child: const Row(
+                  child: Row(
                     children: [
-                      Icon(Icons.sensors_outlined, size: 30),
-                      SizedBox(width: 14),
+                      const Icon(Icons.sensors_outlined, size: 30),
+                      const SizedBox(width: 14),
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              'Compartiendo ubicación aproximada',
-                              style: TextStyle(
+                              sharingLabel,
+                              style: const TextStyle(
                                 fontSize: 17,
                                 fontWeight: FontWeight.w700,
                               ),
                             ),
-                            SizedBox(height: 5),
+                            const SizedBox(height: 5),
                             Text(
-                              'Última actualización hace 28 s · ahorro de batería',
-                              style: TextStyle(
+                              sharingDetail,
+                              style: const TextStyle(
                                 fontSize: 15,
                                 color: Color(0xFF40506A),
                               ),
@@ -1273,7 +1502,7 @@ class ActiveTripView extends StatelessWidget {
                           ],
                         ),
                       ),
-                      Icon(Icons.info_outline),
+                      const Icon(Icons.info_outline),
                     ],
                   ),
                 ),

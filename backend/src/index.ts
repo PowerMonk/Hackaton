@@ -13,6 +13,8 @@ import { handleWebSocket, broadcastVehicleUpdate } from "./routes/websocket";
 const PORT = parseInt(process.env.PORT || "3000");
 const HOST = process.env.HOST || "0.0.0.0";
 const MOBILITY_MODE = process.env.MOBILITY_MODE || "demo";
+const MAX_CONCURRENT_SIMULATION_SAMPLES = 4;
+const VEHICLE_SYNC_INTERVAL_MS = 15_000;
 
 console.log(`
 ╔═══════════════════════════════════════════════════════════╗
@@ -101,29 +103,35 @@ async function initializeServer() {
       console.log("   ⚠️  No routes available for simulation");
     }
 
-    // Connect simulation to mobility processor
-    simulation.onLocationSamples(async (sample) => {
-      if (serverState.dbConnected && serverState.schemaReady) {
-        try {
-          await processLocationSample(sample);
-        } catch (error) {
-          // Silent fail for simulation samples
-        }
-      }
+    // Limit persistence work so simulated samples cannot exhaust the DB pool.
+    let samplesInFlight = 0;
+    simulation.onLocationSamples((sample) => {
+      if (!serverState.dbConnected || !serverState.schemaReady) return;
+      if (samplesInFlight >= MAX_CONCURRENT_SIMULATION_SAMPLES) return;
+
+      samplesInFlight++;
+      void processLocationSample(sample)
+        .catch((error) => {
+          console.error("Simulation sample processing failed:", error);
+        })
+        .finally(() => {
+          samplesInFlight--;
+        });
     });
 
     // Broadcast vehicle updates via WebSocket
-    simulation.onVehicleUpdates(async (vehicles) => {
+    let lastVehicleSyncAt = 0;
+    simulation.onVehicleUpdates((vehicles) => {
       broadcastVehicleUpdate(vehicles);
 
-      // Sync to database periodically (every 10 updates)
-      if (serverState.dbConnected && serverState.schemaReady) {
-        try {
-          await syncVehiclesToDatabase(vehicles);
-        } catch (error) {
-          // Silent fail
-        }
-      }
+      if (!serverState.dbConnected || !serverState.schemaReady) return;
+      const now = Date.now();
+      if (now - lastVehicleSyncAt < VEHICLE_SYNC_INTERVAL_MS) return;
+
+      lastVehicleSyncAt = now;
+      void syncVehiclesToDatabase(vehicles).catch((error) => {
+        console.error("Vehicle synchronization failed:", error);
+      });
     });
 
     // Start simulation

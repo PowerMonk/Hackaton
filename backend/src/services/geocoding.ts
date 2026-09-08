@@ -5,6 +5,20 @@
 
 import type { AddressSuggestion } from "../types";
 
+interface GeoapifyResponse {
+  features?: Array<{
+    properties: {
+      place_id?: string;
+      osm_id?: string | number;
+      formatted: string;
+      city?: string;
+      county?: string;
+      category?: string;
+    };
+    geometry: { coordinates: [number, number] };
+  }>;
+}
+
 const GEOAPIFY_API_KEY = process.env.GEOAPIFY_API_KEY;
 const GEOAPIFY_BASE_URL = "https://api.geoapify.com/v1/geocode";
 
@@ -223,7 +237,7 @@ async function geoapifyAutocomplete(
     throw new Error(`Geoapify error: ${response.status}`);
   }
 
-  const data = await response.json();
+  const data = (await response.json()) as GeoapifyResponse;
 
   return (data.features || []).map((feature: any) => ({
     id: feature.properties.place_id || feature.properties.osm_id || crypto.randomUUID(),
@@ -252,7 +266,7 @@ async function geoapifyReverse(
     throw new Error(`Geoapify error: ${response.status}`);
   }
 
-  const data = await response.json();
+  const data = (await response.json()) as GeoapifyResponse;
 
   if (!data.features || data.features.length === 0) {
     return null;

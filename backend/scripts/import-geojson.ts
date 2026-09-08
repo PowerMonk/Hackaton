@@ -3,7 +3,7 @@
 // Imports routes and stops from local GeoJSON files into PostGIS
 // ============================================================================
 
-import { db, testConnection } from "../src/db/connection";
+import { sql, testConnection } from "../src/db/connection";
 import { importRoutesFromGeoJSON, importStopsFromGeoJSON } from "../src/services/routes";
 import { readFileSync, existsSync } from "fs";
 import { resolve, dirname } from "path";
@@ -85,7 +85,7 @@ async function main() {
   // Link stops to routes (by proximity)
   console.log("Linking stops to nearby routes...");
   try {
-    const result = await db.query`
+    const result = await sql`
       INSERT INTO route_stops (route_id, stop_id, route_progress)
       SELECT DISTINCT ON (r.id, s.id)
         r.id as route_id,
@@ -105,7 +105,7 @@ async function main() {
   // Update route paradas_count
   console.log("Updating route stop counts...");
   try {
-    await db.query`
+    await sql`
       UPDATE routes r
       SET paradas_count = (
         SELECT COUNT(*) FROM route_stops rs WHERE rs.route_id = r.id
@@ -117,9 +117,9 @@ async function main() {
   }
 
   // Summary
-  const routeCount = await db.query`SELECT COUNT(*) as count FROM routes`;
-  const stopCount = await db.query`SELECT COUNT(*) as count FROM stops`;
-  const linkCount = await db.query`SELECT COUNT(*) as count FROM route_stops`;
+  const routeCount = await sql`SELECT COUNT(*) as count FROM routes`;
+  const stopCount = await sql`SELECT COUNT(*) as count FROM stops`;
+  const linkCount = await sql`SELECT COUNT(*) as count FROM route_stops`;
 
   console.log("Import Summary");
   console.log("--------------");

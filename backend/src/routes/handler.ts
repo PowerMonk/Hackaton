@@ -21,7 +21,14 @@ import {
 } from "../services/mobility";
 import { autocomplete, reverseGeocode } from "../services/geocoding";
 import { planRoute } from "../services/routing";
+import {
+  planProvisionalRoutes,
+  type PlannerDataset,
+  type PlannerMode,
+  type PlannerRequest,
+} from "../services/planner";
 import { getSimulation } from "../simulation/engine";
+import { parseLocationSample } from "../services/location-validation";
 import type { LocationSample, RoutePlanRequest } from "../types";
 
 interface ServerState {
@@ -130,8 +137,7 @@ export async function handleRequest(
     if (path.match(/^\/routes\/[^/]+\/vehicles$/) && method === "GET") {
       const routeId = decodeURIComponent(path.split("/")[2]);
 
-      const simulation = getSimulation();
-      const vehicles = simulation.getRouteVehicles(routeId);
+      const vehicles = await getVirtualVehicles(routeId);
 
       return json({
         routeId,
@@ -197,6 +203,10 @@ export async function handleRequest(
       const body = await req.json() as Record<string, unknown>;
       const routeId = body.routeId as string | undefined;
       const deviceId = body.deviceId as string | undefined;
+      const isSimulated =
+        typeof body.isSimulated === "boolean"
+          ? body.isSimulated
+          : (process.env.MOBILITY_MODE || "demo") === "demo";
 
       if (!routeId || !deviceId) {
         return error("routeId and deviceId are required", 422);
@@ -216,7 +226,7 @@ export async function handleRequest(
       const session = await createBoardingSession(
         routeId,
         deviceId,
-        process.env.MOBILITY_MODE === "demo"
+        isSimulated
       );
 
       return json(session, 201);
@@ -249,28 +259,31 @@ export async function handleRequest(
     // ========================================================================
 
     if (path === "/locations" && method === "POST") {
-      const body = await req.json() as Record<string, unknown>;
-
-      const sample: LocationSample = {
-        sessionId: body.sessionId as string,
-        timestamp: (body.timestamp as number) || Date.now(),
-        lat: body.lat as number,
-        lon: body.lon as number,
-        accuracy: (body.accuracy as number) || 10,
-        speed: body.speed as number | undefined,
-        heading: body.heading as number | undefined,
-        isSimulated: (body.isSimulated as boolean) || false,
-      };
-
-      if (!sample.sessionId || sample.lat === undefined || sample.lon === undefined) {
-        return error("sessionId, lat, and lon are required", 422);
+      let body: unknown;
+      try {
+        body = await req.json();
+      } catch {
+        return error("Request body must be valid JSON", 400);
       }
 
+      const validation = parseLocationSample(body);
+      if (!validation.valid) {
+        return error(validation.errors.join("; "), 422);
+      }
+
+      const sample: LocationSample = validation.sample;
       if (!serverState.dbConnected) {
-        return json({ received: true, sample }, 201);
+        return error(
+          "Location sample could not be persisted because the database is unavailable",
+          503
+        );
       }
 
       const processed = await processLocationSample(sample);
+      if (!processed.persisted) {
+        return error("Session not found or already ended", 409);
+      }
+
       return json(processed, 201);
     }
 
@@ -292,7 +305,10 @@ export async function handleRequest(
         return error("origin and destination are required", 422);
       }
 
-      const plan = await planRoute(request);
+      const plan = await planRouteWithAdapter(
+        request,
+        serverState.dbConnected && serverState.schemaReady
+      );
       return json(plan);
     }
 
@@ -418,4 +434,86 @@ export async function handleRequest(
     const message = err instanceof Error ? err.message : "Internal server error";
     return error(message, 500);
   }
+}
+
+async function planRouteWithAdapter(
+  request: RoutePlanRequest,
+  dbConnected: boolean
+): Promise<unknown> {
+  // The pure planner does not model bicycles. Keep the existing routing
+  // behavior for that explicit mode instead of silently dropping it.
+  if (request.modes.includes("bicycle")) {
+    return planRoute(request);
+  }
+
+  try {
+    const dataset = dbConnected
+      ? await loadPlannerDataset()
+      : emptyPlannerDataset();
+    const plannerRequest: PlannerRequest = {
+      origin: request.origin,
+      destination: request.destination,
+      priority: request.priority,
+      modes: request.modes.filter(
+        (mode): mode is PlannerMode => mode === "walk" || mode === "transit"
+      ),
+    };
+    const result = planProvisionalRoutes(plannerRequest, dataset);
+    const recommended = result.recommended;
+
+    if (!recommended) {
+      return planRoute(request);
+    }
+
+    // Preserve the legacy top-level response while exposing the richer
+    // provisional alternatives and assumptions for new clients.
+    return {
+      legs: [...recommended.legs],
+      totalDistanceMeters: recommended.totalDistanceMeters,
+      totalDurationSeconds: recommended.totalDurationSeconds,
+      totalWalkingMeters: recommended.totalWalkingMeters,
+      transfers: recommended.transfers,
+      estimatedCost: recommended.estimatedCost,
+      provider: "mock" as const,
+      recommended,
+      plans: [...result.plans],
+      alternatives: [...result.alternatives],
+      metadata: result.metadata,
+    };
+  } catch (error) {
+    console.warn("Provisional planner adapter failed; using routing fallback:", error);
+    return planRoute(request);
+  }
+}
+
+async function loadPlannerDataset(): Promise<PlannerDataset> {
+  const [routes, stops] = await Promise.all([getAllRoutes(), getAllStops()]);
+  return {
+    routes: routes.map((route) => ({
+      id: route.id,
+      name: route.name,
+      ref: route.ref,
+      mode: route.mode,
+      color: route.color,
+    })),
+    stops: stops.map((stop) => ({
+      id: stop.id,
+      name: stop.name,
+      coordinates: stop.coordinates,
+      routeIds: stop.routeIds,
+    })),
+    coverage: {
+      source: "osm-demo",
+      knownStops: stops.length,
+      complete: false,
+    },
+  };
+}
+
+function emptyPlannerDataset(): PlannerDataset {
+  return {
+    routes: [],
+    stops: [],
+    coverage: { source: "offline", knownStops: 0, complete: false },
+  };
 }

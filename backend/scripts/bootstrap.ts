@@ -57,7 +57,11 @@ async function runMigrations(): Promise<boolean> {
 
   try {
     // Read and execute migration files
-    const files = ["001_extensions.sql", "002_schema.sql"];
+    const files = [
+      "001_extensions.sql",
+      "002_schema.sql",
+      "003_integrity_indexes.sql",
+    ];
 
     for (const file of files) {
       const filePath = resolve(migrationsDir, file);

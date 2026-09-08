@@ -29,6 +29,8 @@ const DEFAULT_CONFIG: SimulationConfig = {
   dwellTimeSeconds: 20,
 };
 
+const LOCATION_SAMPLE_INTERVAL_TICKS = 30;
+
 interface SimulatedVehicle {
   id: string;
   routeId: string;
@@ -295,8 +297,8 @@ export class SimulationEngine {
       this.onVehicleUpdate(this.getVirtualVehicles());
     }
 
-    // Generate location samples every 5 seconds
-    if (this.tickCount % 5 === 0 && this.onLocationSample) {
+    // Generate one representative sample per vehicle every 30 seconds.
+    if (this.tickCount % LOCATION_SAMPLE_INTERVAL_TICKS === 0 && this.onLocationSample) {
       this.generateLocationSamples();
     }
   }
@@ -376,29 +378,27 @@ export class SimulationEngine {
     if (!this.onLocationSample) return;
 
     for (const vehicle of this.vehicles.values()) {
-      for (const passenger of vehicle.passengers) {
-        // Randomly drop some samples
-        if (this.rng.bool(this.config.dropSampleProbability)) continue;
+      const passenger = vehicle.passengers[0];
+      if (!passenger || this.rng.bool(this.config.dropSampleProbability)) continue;
 
-        const position = this.getPositionAtProgress(vehicle.routeId, passenger.progress);
-        if (!position) continue;
+      const position = this.getPositionAtProgress(vehicle.routeId, passenger.progress);
+      if (!position) continue;
 
-        // Add GPS noise
-        const noise = this.gpsNoise.generateNoise(this.config.gpsNoiseMeters);
+      // Add GPS noise
+      const noise = this.gpsNoise.generateNoise(this.config.gpsNoiseMeters);
 
-        const sample: LocationSample = {
-          sessionId: passenger.sessionId,
-          timestamp: Date.now(),
-          lat: position.lat + noise.latOffset,
-          lon: position.lon + noise.lonOffset,
-          accuracy: this.rng.range(5, 15),
-          speed: vehicle.speed / 3.6, // Convert to m/s for API
-          heading: vehicle.heading,
-          isSimulated: true,
-        };
+      const sample: LocationSample = {
+        sessionId: passenger.sessionId,
+        timestamp: Date.now(),
+        lat: position.lat + noise.latOffset,
+        lon: position.lon + noise.lonOffset,
+        accuracy: this.rng.range(5, 15),
+        speed: vehicle.speed / 3.6, // Convert to m/s for API
+        heading: vehicle.heading,
+        isSimulated: true,
+      };
 
-        this.onLocationSample(sample);
-      }
+      this.onLocationSample(sample);
     }
   }
 

@@ -9,6 +9,7 @@ void main() {
     expect(routes.length, 124);
     expect(routes.every((r) => r.tieneGeometriaReal), isTrue);
     expect(routes.any((r) => r.name == 'Gris 4'), isTrue);
+    expect(routes.any((r) => r.id == 'Amarilla 2'), isTrue);
     expect(
       RoutesRepository.search(routes, 'soriana').single.name,
       'Azul A Soriana-CBTA',

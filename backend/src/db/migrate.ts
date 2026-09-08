@@ -3,7 +3,7 @@
 // Applies SQL migrations from db/init directory
 // ============================================================================
 
-import { db, testConnection } from "./connection";
+import { sql, testConnection } from "./connection";
 import { readFileSync, readdirSync } from "fs";
 import { resolve, dirname } from "path";
 
@@ -37,15 +37,15 @@ async function main() {
     console.log(`Applying: ${file}...`);
 
     try {
-      const sql = readFileSync(resolve(MIGRATIONS_DIR, file), "utf-8");
+      const migrationSql = readFileSync(resolve(MIGRATIONS_DIR, file), "utf-8");
 
       // Split by semicolons but handle function definitions
-      const statements = splitSqlStatements(sql);
+      const statements = splitSqlStatements(migrationSql);
 
       for (const statement of statements) {
         const trimmed = statement.trim();
         if (trimmed && !trimmed.startsWith("--")) {
-          await db.unsafe(trimmed);
+          await sql.unsafe(trimmed);
         }
       }
 

@@ -1,0 +1,62 @@
+{
+  "coverage": {
+    "source": "osm-demo",
+    "knownStops": 39,
+    "complete": false
+  },
+  "stops": [
+    {
+      "id": "stop-origin-centro",
+      "name": "Centro - origen",
+      "coordinates": { "lat": 19.7005, "lon": -101.199 },
+      "routeIds": ["route-roja", "route-verde"]
+    },
+    {
+      "id": "stop-origin-alternativa",
+      "name": "Av. Madero - origen",
+      "coordinates": { "lat": 19.701, "lon": -101.198 },
+      "routeIds": ["route-azul"]
+    },
+    {
+      "id": "stop-destination-oriente",
+      "name": "Oriente - destino",
+      "coordinates": { "lat": 19.7095, "lon": -101.181 },
+      "routeIds": ["route-roja"]
+    },
+    {
+      "id": "stop-destination-sur",
+      "name": "Sur - destino",
+      "coordinates": { "lat": 19.708, "lon": -101.182 },
+      "routeIds": ["route-verde"]
+    },
+    {
+      "id": "stop-azul-solo",
+      "name": "Azul sin conexion",
+      "coordinates": { "lat": 19.720, "lon": -101.160 },
+      "routeIds": ["route-azul"]
+    }
+  ],
+  "routes": [
+    {
+      "id": "route-roja",
+      "name": "Ruta Roja",
+      "color": "#C94C28",
+      "stopIds": ["stop-origin-centro", "stop-destination-oriente"],
+      "fare": 12
+    },
+    {
+      "id": "route-verde",
+      "name": "Ruta Verde",
+      "color": "#176B48",
+      "stopIds": ["stop-origin-centro", "stop-destination-sur"],
+      "fare": 10
+    },
+    {
+      "id": "route-azul",
+      "name": "Ruta Azul",
+      "color": "#2E7D8A",
+      "stopIds": ["stop-origin-alternativa", "stop-azul-solo"],
+      "fare": 8
+    }
+  ]
+}

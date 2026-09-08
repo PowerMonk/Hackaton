@@ -56,12 +56,14 @@ class RoutesRepository {
       i++;
       final props = (f['properties'] as Map).cast<String, dynamic>();
       final nombre = (props['nombre'] ?? props['ref'] ?? 'Ruta $i') as String;
+      final stableId = (f['id'] ?? props['ref'] ?? props['nombre'] ?? 'Ruta $i')
+          .toString();
       final geom = (f['geometry'] as Map).cast<String, dynamic>();
       final poly = _flattenGeometry(geom);
       if (poly.length < 2) continue;
       routes.add(
         TransitRoute(
-          id: 'R${i.toString().padLeft(2, '0')}',
+          id: stableId,
           name: nombre,
           mode: _inferMode(nombre),
           frequency: 'Estimado · cada ~10 min',
@@ -133,6 +135,20 @@ class RoutesRepository {
     } catch (_) {
       return demoStops;
     }
+  }
+
+  /// Approximate distance from a user position to the nearest route point.
+  /// The local dataset is simplified, so this is intentionally conservative.
+  static double distanceToRoute(LatLng position, TransitRoute route) {
+    if (!route.tieneGeometriaReal) return double.infinity;
+    const distance = Distance();
+    var nearest = double.infinity;
+    for (final point in route.polyline!) {
+      nearest = nearest < distance(position, point)
+          ? nearest
+          : distance(position, point);
+    }
+    return nearest;
   }
 
   static List<LatLng> _flattenGeometry(Map<String, dynamic> geom) {

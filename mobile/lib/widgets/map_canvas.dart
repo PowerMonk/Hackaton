@@ -9,6 +9,9 @@ import '../theme/app_theme.dart';
 class DemoMap extends StatelessWidget {
   const DemoMap({
     required this.route,
+    this.userPosition,
+    this.locationAccuracy,
+    this.isLiveLocation = false,
     this.showDemoLabel = false,
     this.showRoute = true,
     this.height = 400,
@@ -16,21 +19,24 @@ class DemoMap extends StatelessWidget {
   });
 
   final TransitRoute route;
+  final LatLng? userPosition;
+  final double? locationAccuracy;
+  final bool isLiveLocation;
   final bool showDemoLabel;
   final bool showRoute;
   final double height;
 
-  static const userPosition = LatLng(19.70234, -101.18492);
-  static const vehiclePosition = LatLng(19.70452, -101.19006);
+  static const demoUserPosition = LatLng(19.70234, -101.18492);
+  static const demoVehiclePosition = LatLng(19.70452, -101.19006);
   static const isFlutterTest = bool.fromEnvironment('FLUTTER_TEST');
 
   static final _routePoints = <LatLng>[
     const LatLng(19.69286, -101.17402),
     const LatLng(19.69644, -101.17756),
     const LatLng(19.69945, -101.18122),
-    userPosition,
+    demoUserPosition,
     const LatLng(19.70376, -101.18814),
-    vehiclePosition,
+    demoVehiclePosition,
     const LatLng(19.70768, -101.19738),
   ];
 
@@ -38,17 +44,18 @@ class DemoMap extends StatelessWidget {
       showRoute && route.tieneGeometriaReal ? route.polyline! : _routePoints;
 
   LatLng get _center {
+    if (isLiveLocation && userPosition != null) return userPosition!;
     final pts = _effectivePolyline;
     return pts[pts.length ~/ 2];
   }
 
   LatLng get _simUser {
-    if (!showRoute || !route.tieneGeometriaReal) return userPosition;
+    if (!showRoute || !route.tieneGeometriaReal) return demoUserPosition;
     return DemoSimulation().positionAt(_effectivePolyline, 0.35);
   }
 
   LatLng get _simVehicle {
-    if (!showRoute || !route.tieneGeometriaReal) return vehiclePosition;
+    if (!showRoute || !route.tieneGeometriaReal) return demoVehiclePosition;
     return DemoSimulation().positionAt(_effectivePolyline, 0.55);
   }
 
@@ -67,7 +74,7 @@ class DemoMap extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final pts = _effectivePolyline;
-    final user = _simUser;
+    final user = isLiveLocation ? userPosition : _simUser;
     final vehicle = _simVehicle;
     return SizedBox(
       height: height,
@@ -126,12 +133,15 @@ class DemoMap extends StatelessWidget {
                   markers: [
                     if (showRoute)
                       for (final s in _simStops) _stopMarker(s),
-                    Marker(
-                      point: user,
-                      width: 46,
-                      height: 46,
-                      child: const _UserMarker(),
-                    ),
+                    if (user != null)
+                      Marker(
+                        point: user,
+                        width: 46,
+                        height: 46,
+                        child: _UserMarker(
+                          accuracy: isLiveLocation ? locationAccuracy : null,
+                        ),
+                      ),
                     if (showRoute)
                       Marker(
                         point: vehicle,
@@ -159,9 +169,11 @@ class DemoMap extends StatelessWidget {
             top: 16,
             left: 16,
             child: _MapPill(
-              label: !showRoute
-                  ? 'Mapa general'
-                  : showDemoLabel
+                   label: !showRoute
+                       ? 'Mapa general'
+                       : isLiveLocation
+                       ? 'GPS real'
+                       : showDemoLabel
                   ? 'Modo demostración'
                   : (showRoute && route.tieneGeometriaReal
                         ? 'OSM · 1 unidad sim.'
@@ -245,7 +257,9 @@ class _VehicleMarker extends StatelessWidget {
 }
 
 class _UserMarker extends StatelessWidget {
-  const _UserMarker();
+  const _UserMarker({this.accuracy});
+
+  final double? accuracy;
 
   @override
   Widget build(BuildContext context) {
@@ -255,7 +269,10 @@ class _UserMarker extends StatelessWidget {
       decoration: BoxDecoration(
         color: AppColors.ink,
         shape: BoxShape.circle,
-        border: Border.all(color: Colors.white, width: 5),
+        border: Border.all(
+          color: accuracy == null ? Colors.white : AppColors.greenBright,
+          width: 5,
+        ),
         boxShadow: const [
           BoxShadow(color: Color(0x221B2738), blurRadius: 0, spreadRadius: 12),
         ],
