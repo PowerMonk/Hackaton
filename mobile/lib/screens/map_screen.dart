@@ -182,7 +182,7 @@ class RouteSelectionView extends StatelessWidget {
         final visibleRoutes = routes;
         final subtitle = isLoadingReal
             ? 'Sin destino obligatorio · cargando datos OSM…'
-            : 'Sin destino obligatorio · $totalCount rutas OSM demo';
+            : 'Sin destino obligatorio · $totalCount rutas · datos OSM';
         return Column(
           children: [
             Expanded(
@@ -644,7 +644,7 @@ class FocusedRouteView extends StatelessWidget {
                   Padding(
                     padding: const EdgeInsets.only(top: 6),
                     child: Text(
-                      'Trazo OSM demo · ${route.polyline!.length} pts · estimado',
+                      'Trazo OSM · ${route.polyline!.length} pts · estimado',
                       style: const TextStyle(
                         color: AppColors.muted,
                         fontSize: 14,

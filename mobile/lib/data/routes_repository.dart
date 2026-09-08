@@ -7,17 +7,17 @@ import 'package:latlong2/latlong.dart';
 import '../models/app_models.dart';
 import 'demo_data.dart';
 
-/// Carga las 12 rutas curadas de OSM desde assets locales.
+/// Carga las rutas de Morelia desde assets locales (dataset OSM completo).
 ///
 /// Fuente: `morelia-rutas/rutas_liviano.geojson` (ODbL, © OSM contribuidores),
-/// recortada a `assets/geojson/rutas_demo.geojson` (~50KB).
+/// 124 rutas con geometría simplificada (~13 m) para móvil.
 /// En v0.1 todo es local y estimado; el backend Bun/PostGIS (ver context.md)
 /// reemplazará esta clase sin cambiar la UI.
 class RoutesRepository {
   RoutesRepository._();
 
-  static const _rutasAsset = 'assets/geojson/rutas_demo.geojson';
-  static const _paradasAsset = 'assets/geojson/paradas_demo.geojson';
+  static const _rutasAsset = 'assets/geojson/rutas_morelia.geojson';
+  static const _paradasAsset = 'assets/geojson/paradas_morelia.geojson';
 
   static const _palette = <Color>[
     Color(0xFFC94C28), // terracota
@@ -28,47 +28,59 @@ class RoutesRepository {
     Color(0xFF2E7D32),
   ];
 
-  /// Carga rutas reales; si falla (p.ej. en tests sin assets), cae a [demoRoutes].
+  /// Carga rutas reales; si falla, cae a [demoRoutes].
+  ///
+  /// Nota: en `flutter test` los assets grandes (>~100KB) pueden no
+  /// resolverse y se usa el fallback; en la app instalada el asset de
+  /// 124 rutas carga normal. El parseo está cubierto por tests unitarios
+  /// vía [parseRoutesJson].
   static Future<List<TransitRoute>> loadDemoRoutes() async {
     try {
       final raw = await rootBundle.loadString(_rutasAsset);
-      final fc = json.decode(raw) as Map<String, dynamic>;
-      final features = (fc['features'] as List).cast<Map<String, dynamic>>();
-      final routes = <TransitRoute>[];
-      var i = 0;
-      for (final f in features) {
-        i++;
-        final props = (f['properties'] as Map).cast<String, dynamic>();
-        final nombre = (props['nombre'] ?? props['ref'] ?? 'Ruta $i') as String;
-        final geom = (f['geometry'] as Map).cast<String, dynamic>();
-        final poly = _flattenGeometry(geom);
-        if (poly.length < 2) continue;
-        routes.add(
-          TransitRoute(
-            id: 'R${i.toString().padLeft(2, '0')}',
-            name: nombre,
-            mode: _inferMode(nombre),
-            frequency: 'Estimado · cada ~10 min',
-            eta: '—',
-            color: _palette[(i - 1) % _palette.length],
-            status: RouteStatus.active,
-            sharedSegment: (props['variantes'] as num?) != null &&
-                    (props['variantes'] as num) > 1
-                ? '${props['variantes']} variantes en OSM'
-                : null,
-            polyline: poly,
-            fuente: 'osm-demo',
-            esEstimado: true,
-            paradasCount: (props['paradas'] as num?)?.toInt() ?? 0,
-          ),
-        );
-      }
-      routes.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+      final routes = parseRoutesJson(raw);
       if (routes.isEmpty) return demoRoutes;
       return routes;
     } catch (_) {
       return demoRoutes;
     }
+  }
+
+  /// Parsea un FeatureCollection de rutas a [TransitRoute].
+  /// Función pura (sin assets) para poder probarla con el dataset completo.
+  static List<TransitRoute> parseRoutesJson(String raw) {
+    final fc = json.decode(raw) as Map<String, dynamic>;
+    final features = (fc['features'] as List).cast<Map<String, dynamic>>();
+    final routes = <TransitRoute>[];
+    var i = 0;
+    for (final f in features) {
+      i++;
+      final props = (f['properties'] as Map).cast<String, dynamic>();
+      final nombre = (props['nombre'] ?? props['ref'] ?? 'Ruta $i') as String;
+      final geom = (f['geometry'] as Map).cast<String, dynamic>();
+      final poly = _flattenGeometry(geom);
+      if (poly.length < 2) continue;
+      routes.add(
+        TransitRoute(
+          id: 'R${i.toString().padLeft(2, '0')}',
+          name: nombre,
+          mode: _inferMode(nombre),
+          frequency: 'Estimado · cada ~10 min',
+          eta: '—',
+          color: _palette[(i - 1) % _palette.length],
+          status: RouteStatus.active,
+          sharedSegment: (props['variantes'] as num?) != null &&
+                  (props['variantes'] as num) > 1
+              ? '${props['variantes']} variantes en OSM'
+              : null,
+          polyline: poly,
+          fuente: 'osm-demo',
+          esEstimado: true,
+          paradasCount: (props['paradas'] as num?)?.toInt() ?? 0,
+        ),
+      );
+    }
+    routes.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    return routes;
   }
 
   /// Paradas cercanas a una ruta (≤[maxMeters]), ordenadas por progreso.

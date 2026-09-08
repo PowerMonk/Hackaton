@@ -157,7 +157,7 @@ class DemoMap extends StatelessWidget {
               label: showDemoLabel
                   ? 'Modo demostración'
                   : (route.tieneGeometriaReal
-                        ? 'OSM demo · 1 unidad sim.'
+                        ? 'OSM · 1 unidad sim.'
                         : '1 unidad · hace 28 s'),
               dark: showDemoLabel,
             ),
