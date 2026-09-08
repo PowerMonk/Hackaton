@@ -2,6 +2,82 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 
+import 'mobility_api.dart';
+
+/// Database status from /health endpoint.
+class DatabaseStatus {
+  const DatabaseStatus({
+    required this.isConnected,
+    required this.schemaReady,
+    required this.routeCount,
+    required this.stopCount,
+  });
+
+  final bool isConnected;
+  final bool schemaReady;
+  final int routeCount;
+  final int stopCount;
+
+  bool get isReady => isConnected && schemaReady;
+
+  static DatabaseStatus fromJson(Map<String, dynamic>? json) {
+    if (json == null) {
+      return const DatabaseStatus(
+        isConnected: false,
+        schemaReady: false,
+        routeCount: 0,
+        stopCount: 0,
+      );
+    }
+    return DatabaseStatus(
+      isConnected: json['connected'] as bool? ?? false,
+      schemaReady: json['schemaReady'] as bool? ?? false,
+      routeCount: json['routes'] as int? ?? 0,
+      stopCount: json['stops'] as int? ?? 0,
+    );
+  }
+}
+
+/// Simulation status from /health endpoint.
+class SimulationStatus {
+  const SimulationStatus({
+    required this.isRunning,
+    required this.vehicleCount,
+    required this.totalPassengers,
+    required this.movingCount,
+    required this.pausedCount,
+    required this.dwellingCount,
+  });
+
+  final bool isRunning;
+  final int vehicleCount;
+  final int totalPassengers;
+  final int movingCount;
+  final int pausedCount;
+  final int dwellingCount;
+
+  static SimulationStatus fromJson(Map<String, dynamic>? json) {
+    if (json == null) {
+      return const SimulationStatus(
+        isRunning: false,
+        vehicleCount: 0,
+        totalPassengers: 0,
+        movingCount: 0,
+        pausedCount: 0,
+        dwellingCount: 0,
+      );
+    }
+    return SimulationStatus(
+      isRunning: json['running'] as bool? ?? false,
+      vehicleCount: json['vehicleCount'] as int? ?? 0,
+      totalPassengers: json['totalPassengers'] as int? ?? 0,
+      movingCount: json['movingCount'] as int? ?? 0,
+      pausedCount: json['pausedCount'] as int? ?? 0,
+      dwellingCount: json['dwellingCount'] as int? ?? 0,
+    );
+  }
+}
+
 /// Health status from the backend /health endpoint.
 class HealthStatus {
   const HealthStatus({
@@ -11,6 +87,9 @@ class HealthStatus {
     required this.vehicleCount,
     required this.routeCount,
     required this.lastCheckedAt,
+    required this.database,
+    required this.simulation,
+    this.version,
     this.errorMessage,
   });
 
@@ -20,11 +99,14 @@ class HealthStatus {
   final int vehicleCount;
   final int routeCount;
   final DateTime lastCheckedAt;
+  final DatabaseStatus database;
+  final SimulationStatus simulation;
+  final String? version;
   final String? errorMessage;
 
   bool get isDemoMode => mode == 'demo';
   bool get isLiveMode => mode == 'live';
-  bool get isDegraded => mode == 'degraded' || !isHealthy;
+  bool get isDegraded => !isHealthy || !database.isReady;
   bool get isOffline => !isConnected;
 
   static HealthStatus offline({String? error}) => HealthStatus(
@@ -34,17 +116,39 @@ class HealthStatus {
     vehicleCount: 0,
     routeCount: 0,
     lastCheckedAt: DateTime.now(),
+    database: const DatabaseStatus(
+      isConnected: false,
+      schemaReady: false,
+      routeCount: 0,
+      stopCount: 0,
+    ),
+    simulation: const SimulationStatus(
+      isRunning: false,
+      vehicleCount: 0,
+      totalPassengers: 0,
+      movingCount: 0,
+      pausedCount: 0,
+      dwellingCount: 0,
+    ),
     errorMessage: error ?? 'Sin conexión al servidor',
   );
 
   static HealthStatus fromJson(Map<String, dynamic> json, DateTime checkedAt) {
+    final status = json['status'] as String? ?? 'degraded';
     return HealthStatus(
       isConnected: true,
-      isHealthy: json['running'] == true,
+      isHealthy: status == 'healthy',
       mode: json['mode'] as String? ?? 'demo',
       vehicleCount: json['vehicleCount'] as int? ?? 0,
       routeCount: json['routeCount'] as int? ?? 0,
       lastCheckedAt: checkedAt,
+      database: DatabaseStatus.fromJson(
+        json['database'] as Map<String, dynamic>?,
+      ),
+      simulation: SimulationStatus.fromJson(
+        json['simulation'] as Map<String, dynamic>?,
+      ),
+      version: json['version'] as String?,
     );
   }
 }
@@ -54,10 +158,7 @@ class HealthRepository {
   HealthRepository({
     String? baseUrl,
     this.checkIntervalSeconds = 30,
-  }) : _baseUrl = baseUrl ?? const String.fromEnvironment(
-    'API_BASE_URL',
-    defaultValue: 'http://localhost:3000',
-  );
+  }) : _baseUrl = baseUrl ?? ApiConfig.baseUrl;
 
   final String _baseUrl;
   final int checkIntervalSeconds;

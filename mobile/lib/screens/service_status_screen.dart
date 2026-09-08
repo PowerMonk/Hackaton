@@ -83,9 +83,21 @@ class _ServiceStatusScreenState extends State<ServiceStatusScreen> {
             if (status != null && status.isConnected)
               _buildStatsRow(status),
 
+            // Simulation details
+            if (status != null && status.isConnected && status.simulation.isRunning)
+              _buildSimulationCard(status),
+
+            // Database details
+            if (status != null && status.isConnected)
+              _buildDatabaseCard(status),
+
             // Show degradation warnings
             if (status != null && status.isDegraded && status.isConnected)
               _buildDegradedWarning(status),
+
+            // Version info
+            if (status != null && status.version != null)
+              _buildVersionInfo(status),
           ],
         ),
       ),
@@ -269,6 +281,172 @@ class _ServiceStatusScreenState extends State<ServiceStatusScreen> {
     );
   }
 
+  Widget _buildSimulationCard(HealthStatus status) {
+    final sim = status.simulation;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: SoftCard(
+        color: const Color(0xFFF0F7FF),
+        borderColor: const Color(0xFFB8D4F0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: AppColors.teal.withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(
+                    Icons.play_circle_outline,
+                    color: AppColors.teal,
+                    size: 26,
+                  ),
+                ),
+                const SizedBox(width: 14),
+                const Expanded(
+                  child: Text(
+                    'Simulación activa',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: AppColors.greenBright.withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    '${sim.vehicleCount} vehículos',
+                    style: const TextStyle(
+                      color: AppColors.green,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                _SimStatChip(
+                  icon: Icons.directions_run,
+                  label: 'Mov.',
+                  value: sim.movingCount,
+                  color: AppColors.greenBright,
+                ),
+                const SizedBox(width: 10),
+                _SimStatChip(
+                  icon: Icons.pause,
+                  label: 'Pausados',
+                  value: sim.pausedCount,
+                  color: AppColors.amber,
+                ),
+                const SizedBox(width: 10),
+                _SimStatChip(
+                  icon: Icons.access_time,
+                  label: 'En parada',
+                  value: sim.dwellingCount,
+                  color: AppColors.teal,
+                ),
+                const SizedBox(width: 10),
+                _SimStatChip(
+                  icon: Icons.people,
+                  label: 'Pasajeros',
+                  value: sim.totalPassengers,
+                  color: AppColors.terracotta,
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDatabaseCard(HealthStatus status) {
+    final db = status.database;
+    final isReady = db.isReady;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: SoftCard(
+        color: isReady ? const Color(0xFFF5F5F5) : AppColors.creamDark,
+        borderColor: isReady ? AppColors.line : AppColors.amber,
+        child: Row(
+          children: [
+            Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                color: isReady
+                    ? AppColors.ink.withValues(alpha: 0.1)
+                    : AppColors.amber.withValues(alpha: 0.2),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(
+                isReady ? Icons.storage : Icons.storage_outlined,
+                color: isReady ? AppColors.ink : AppColors.amber,
+                size: 24,
+              ),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    isReady ? 'Base de datos conectada' : 'Base de datos no disponible',
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    isReady
+                        ? '${db.routeCount} rutas · ${db.stopCount} paradas'
+                        : 'Usando datos de demostración',
+                    style: const TextStyle(
+                      color: AppColors.muted,
+                      fontSize: 14,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Icon(
+              isReady ? Icons.check_circle : Icons.warning,
+              color: isReady ? AppColors.greenBright : AppColors.amber,
+              size: 28,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildVersionInfo(HealthStatus status) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Center(
+        child: Text(
+          'Backend v${status.version}',
+          style: const TextStyle(
+            color: AppColors.muted,
+            fontSize: 13,
+          ),
+        ),
+      ),
+    );
+  }
+
   String _getModeLabel(HealthStatus? status) {
     if (status == null) return 'Verificando...';
     if (!status.isConnected) return 'Offline';
@@ -336,6 +514,54 @@ class _StatCard extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _SimStatChip extends StatelessWidget {
+  const _SimStatChip({
+    required this.icon,
+    required this.label,
+    required this.value,
+    required this.color,
+  });
+
+  final IconData icon;
+  final String label;
+  final int value;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 10),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Column(
+          children: [
+            Icon(icon, size: 20, color: color),
+            const SizedBox(height: 4),
+            Text(
+              '$value',
+              style: TextStyle(
+                color: color,
+                fontSize: 18,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            Text(
+              label,
+              style: TextStyle(
+                color: color.withValues(alpha: 0.8),
+                fontSize: 11,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
