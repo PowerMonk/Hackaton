@@ -19,3 +19,6 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/geojson/rutas_demo.geojson
+    - assets/geojson/paradas_demo.geojson

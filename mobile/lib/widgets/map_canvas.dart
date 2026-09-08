@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 
+import '../data/demo_simulation.dart';
 import '../models/app_models.dart';
 import '../theme/app_theme.dart';
 
@@ -31,8 +32,41 @@ class DemoMap extends StatelessWidget {
     const LatLng(19.70768, -101.19738),
   ];
 
+  List<LatLng> get _effectivePolyline =>
+      route.tieneGeometriaReal ? route.polyline! : _routePoints;
+
+  LatLng get _center {
+    final pts = _effectivePolyline;
+    return pts[pts.length ~/ 2];
+  }
+
+  LatLng get _simUser {
+    if (!route.tieneGeometriaReal) return userPosition;
+    return DemoSimulation().positionAt(_effectivePolyline, 0.35);
+  }
+
+  LatLng get _simVehicle {
+    if (!route.tieneGeometriaReal) return vehiclePosition;
+    return DemoSimulation().positionAt(_effectivePolyline, 0.55);
+  }
+
+  List<LatLng> get _simStops {
+    if (!route.tieneGeometriaReal) {
+      return const [
+        LatLng(19.69644, -101.17756),
+        LatLng(19.69945, -101.18122),
+        LatLng(19.70376, -101.18814),
+      ];
+    }
+    final pts = _effectivePolyline;
+    return [pts.first, pts[pts.length ~/ 2], pts.last];
+  }
+
   @override
   Widget build(BuildContext context) {
+    final pts = _effectivePolyline;
+    final user = _simUser;
+    final vehicle = _simVehicle;
     return SizedBox(
       height: height,
       width: double.infinity,
@@ -41,8 +75,8 @@ class DemoMap extends StatelessWidget {
           Positioned.fill(
             child: FlutterMap(
               options: MapOptions(
-                initialCenter: const LatLng(19.7018, -101.1857),
-                initialZoom: 14.3,
+                initialCenter: _center,
+                initialZoom: route.tieneGeometriaReal ? 13.2 : 14.3,
                 minZoom: 11,
                 maxZoom: 18,
                 backgroundColor: AppColors.cream,
@@ -65,18 +99,19 @@ class DemoMap extends StatelessWidget {
                   ),
                 PolylineLayer(
                   polylines: [
+                    if (!route.tieneGeometriaReal)
+                      Polyline(
+                        points: const [
+                          LatLng(19.6955, -101.1955),
+                          LatLng(19.6992, -101.1897),
+                          LatLng(19.704, -101.1808),
+                          LatLng(19.7082, -101.1739),
+                        ],
+                        color: AppColors.teal.withValues(alpha: 0.35),
+                        strokeWidth: 7,
+                      ),
                     Polyline(
-                      points: const [
-                        LatLng(19.6955, -101.1955),
-                        LatLng(19.6992, -101.1897),
-                        LatLng(19.704, -101.1808),
-                        LatLng(19.7082, -101.1739),
-                      ],
-                      color: AppColors.teal.withValues(alpha: 0.35),
-                      strokeWidth: 7,
-                    ),
-                    Polyline(
-                      points: _routePoints,
+                      points: pts,
                       color: route.color,
                       strokeWidth: 9,
                       borderColor: Colors.white,
@@ -86,20 +121,18 @@ class DemoMap extends StatelessWidget {
                 ),
                 MarkerLayer(
                   markers: [
-                    _stopMarker(const LatLng(19.69644, -101.17756)),
-                    _stopMarker(const LatLng(19.69945, -101.18122)),
-                    _stopMarker(const LatLng(19.70376, -101.18814)),
-                    const Marker(
-                      point: userPosition,
+                    for (final s in _simStops) _stopMarker(s),
+                    Marker(
+                      point: user,
                       width: 46,
                       height: 46,
-                      child: _UserMarker(),
+                      child: const _UserMarker(),
                     ),
-                    const Marker(
-                      point: vehiclePosition,
+                    Marker(
+                      point: vehicle,
                       width: 58,
                       height: 58,
-                      child: _VehicleMarker(),
+                      child: const _VehicleMarker(),
                     ),
                     const Marker(
                       point: LatLng(19.7059, -101.1929),
@@ -123,7 +156,9 @@ class DemoMap extends StatelessWidget {
             child: _MapPill(
               label: showDemoLabel
                   ? 'Modo demostración'
-                  : '1 unidad · hace 28 s',
+                  : (route.tieneGeometriaReal
+                        ? 'OSM demo · 1 unidad sim.'
+                        : '1 unidad · hace 28 s'),
               dark: showDemoLabel,
             ),
           ),

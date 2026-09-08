@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../data/demo_data.dart';
+import '../data/demo_simulation.dart';
+import '../data/routes_repository.dart';
 import '../models/app_models.dart';
 import '../theme/app_theme.dart';
 import '../widgets/map_canvas.dart';
@@ -18,8 +20,31 @@ class MapScreen extends StatefulWidget {
 class _MapScreenState extends State<MapScreen> {
   TransitRoute? selectedRoute;
   String selectedFilter = 'Cerca de mí';
+  String query = '';
+  List<TransitRoute> routes = demoRoutes;
+  bool loadingReal = true;
   bool activeTrip = false;
+  bool tripMinimized = false;
   bool routeFocused = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadRealRoutes();
+  }
+
+  Future<void> _loadRealRoutes() async {
+    final real = await RoutesRepository.loadDemoRoutes();
+    if (!mounted) return;
+    setState(() {
+      routes = real;
+      loadingReal = false;
+      if (selectedRoute != null) {
+        final match = real.where((r) => r.id == selectedRoute!.id);
+        if (match.isNotEmpty) selectedRoute = match.first;
+      }
+    });
+  }
 
   void _selectRoute(TransitRoute route) {
     setState(() {
@@ -28,12 +53,37 @@ class _MapScreenState extends State<MapScreen> {
     });
   }
 
+  List<TransitRoute> get visibleRoutes {
+    var list = switch (selectedFilter) {
+      'Combis' => routes.where((route) => route.mode == 'Combi').toList(),
+      'Camiones' => routes
+          .where(
+            (route) => route.mode == 'Camión' || route.mode == 'Micro',
+          )
+          .toList(),
+      _ => List<TransitRoute>.from(routes),
+    };
+    list = RoutesRepository.search(list, query);
+    return list;
+  }
+
   @override
   Widget build(BuildContext context) {
-    if (activeTrip && selectedRoute != null) {
-      return ActiveTripView(
-        route: selectedRoute!,
-        onExit: () => setState(() => activeTrip = false),
+    if (activeTrip && !tripMinimized && selectedRoute != null) {
+      return PopScope(
+        canPop: false,
+        onPopInvokedWithResult: (didPop, _) {
+          if (!didPop) setState(() => tripMinimized = true);
+        },
+        child: ActiveTripView(
+          route: selectedRoute!,
+          onBack: () => setState(() => tripMinimized = true),
+          onExit: () => setState(() {
+            activeTrip = false;
+            tripMinimized = false;
+            routeFocused = selectedRoute != null;
+          }),
+        ),
       );
     }
     if (selectedRoute != null && routeFocused) {
@@ -43,13 +93,24 @@ class _MapScreenState extends State<MapScreen> {
           selectedRoute = null;
           routeFocused = false;
         }),
-        onBoarding: () => _showBoardingSheet(context),
+        onBoarding: () {
+          if (activeTrip) {
+            setState(() => tripMinimized = false);
+          } else {
+            _showBoardingSheet(context);
+          }
+        },
         onService: widget.onOpenService,
       );
     }
     return RouteSelectionView(
       selectedRoute: selectedRoute,
       selectedFilter: selectedFilter,
+      routes: visibleRoutes,
+      totalCount: routes.length,
+      isLoadingReal: loadingReal,
+      query: query,
+      onQueryChanged: (q) => setState(() => query = q),
       onSelect: _selectRoute,
       onSelectFilter: (filter) => setState(() => selectedFilter = filter),
       onViewMap: () {
@@ -57,8 +118,12 @@ class _MapScreenState extends State<MapScreen> {
       },
       onOpenActiveTrip: () {
         setState(() {
-          selectedRoute ??= demoRoutes.first;
-          routeFocused = true;
+          selectedRoute ??= routes.first;
+          if (activeTrip) {
+            tripMinimized = false;
+          } else {
+            routeFocused = true;
+          }
         });
       },
     );
@@ -71,7 +136,12 @@ class _MapScreenState extends State<MapScreen> {
       backgroundColor: Colors.transparent,
       builder: (context) => BoardingSheet(route: selectedRoute!),
     );
-    if (boarded == true && mounted) setState(() => activeTrip = true);
+    if (boarded == true && mounted) {
+      setState(() {
+        activeTrip = true;
+        tripMinimized = false;
+      });
+    }
   }
 }
 
@@ -79,6 +149,11 @@ class RouteSelectionView extends StatelessWidget {
   const RouteSelectionView({
     required this.selectedRoute,
     required this.selectedFilter,
+    required this.routes,
+    required this.totalCount,
+    required this.isLoadingReal,
+    required this.query,
+    required this.onQueryChanged,
     required this.onSelect,
     required this.onSelectFilter,
     required this.onViewMap,
@@ -88,6 +163,11 @@ class RouteSelectionView extends StatelessWidget {
 
   final TransitRoute? selectedRoute;
   final String selectedFilter;
+  final List<TransitRoute> routes;
+  final int totalCount;
+  final bool isLoadingReal;
+  final String query;
+  final ValueChanged<String> onQueryChanged;
   final ValueChanged<TransitRoute> onSelect;
   final ValueChanged<String> onSelectFilter;
   final VoidCallback onViewMap;
@@ -99,17 +179,10 @@ class RouteSelectionView extends StatelessWidget {
       builder: (context, constraints) {
         final isCompact = constraints.maxWidth < 360;
         final horizontal = isCompact ? 16.0 : 22.0;
-        final visibleRoutes = switch (selectedFilter) {
-          'Combis' =>
-            demoRoutes.where((route) => route.mode == 'Combi').toList(),
-          'Camiones' =>
-            demoRoutes
-                .where(
-                  (route) => route.mode == 'Camión' || route.mode == 'Micro',
-                )
-                .toList(),
-          _ => demoRoutes,
-        };
+        final visibleRoutes = routes;
+        final subtitle = isLoadingReal
+            ? 'Sin destino obligatorio · cargando datos OSM…'
+            : 'Sin destino obligatorio · $totalCount rutas OSM demo';
         return Column(
           children: [
             Expanded(
@@ -118,41 +191,34 @@ class RouteSelectionView extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        _BackButton(onPressed: onOpenActiveTrip),
-                        const SizedBox(width: 16),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'Elige tu ruta',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontSize: isCompact ? 27 : 32,
-                                  fontWeight: FontWeight.w800,
-                                  letterSpacing: -1,
-                                ),
-                              ),
-                              const SizedBox(height: 5),
-                              Text(
-                                'Sin destino obligatorio · 6 rutas cerca',
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontSize: isCompact ? 15 : 17,
-                                  color: AppColors.muted,
-                                ),
-                              ),
-                            ],
+                        Text(
+                          'Elige tu ruta',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: isCompact ? 27 : 32,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: -1,
+                          ),
+                        ),
+                        const SizedBox(height: 5),
+                        Text(
+                          subtitle,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: isCompact ? 15 : 17,
+                            color: AppColors.muted,
                           ),
                         ),
                       ],
                     ),
                     const SizedBox(height: 22),
                     TextField(
+                      onChanged: onQueryChanged,
                       decoration: InputDecoration(
                         hintText: 'Buscar por número, colonia o destino...',
                         hintStyle: TextStyle(
@@ -229,7 +295,11 @@ class RouteSelectionView extends StatelessWidget {
                             const SizedBox(width: 12),
                             Expanded(
                               child: Text(
-                                'Hay una unidad en curso en R12',
+                                selectedRoute != null
+                                    ? 'Hay una unidad simulada en ${selectedRoute!.id} · tócala para verla'
+                                    : (visibleRoutes.isNotEmpty
+                                          ? 'Hay unidades simuladas · elige una ruta para verla'
+                                          : 'Sin rutas para ese filtro · prueba otra búsqueda'),
                                 maxLines: 2,
                                 overflow: TextOverflow.ellipsis,
                                 style: TextStyle(
@@ -413,6 +483,15 @@ class FocusedRouteView extends StatelessWidget {
     final screenHeight = MediaQuery.sizeOf(context).height;
     final compact = MediaQuery.sizeOf(context).width < 360;
     final mapHeight = (screenHeight * 0.56).clamp(360.0, 560.0);
+    final isReal = route.tieneGeometriaReal;
+    final simEta = isReal
+        ? DemoSimulation().etaFor(route.polyline!, 0.4).label
+        : '4-6 min';
+    final vehicleTitle =
+        isReal ? 'Unidad simulada en recorrido' : 'Unidad a 350 m de ti';
+    final vehicleSubtitle = isReal
+        ? 'Sobre el trazo OSM · confianza media'
+        : 'Cerca de Villalongín · confianza alta';
     return SingleChildScrollView(
       child: Column(
         children: [
@@ -440,8 +519,10 @@ class FocusedRouteView extends StatelessWidget {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                '${route.id} · Hacia Centro',
-                                maxLines: 1,
+                                isReal
+                                    ? '${route.id} · ${route.name}'
+                                    : '${route.id} · Hacia Centro',
+                                maxLines: 2,
                                 overflow: TextOverflow.ellipsis,
                                 style: TextStyle(
                                   fontSize: compact ? 16 : 18,
@@ -449,9 +530,13 @@ class FocusedRouteView extends StatelessWidget {
                                 ),
                               ),
                               const SizedBox(height: 4),
-                              const StatusPill(
-                                label: 'Alta confianza',
-                                color: AppColors.green,
+                              StatusPill(
+                                label: isReal
+                                    ? 'Confianza media · estimado'
+                                    : 'Alta confianza',
+                                color: isReal
+                                    ? AppColors.amber
+                                    : AppColors.green,
                               ),
                             ],
                           ),
@@ -495,7 +580,7 @@ class FocusedRouteView extends StatelessWidget {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  'Unidad a 350 m de ti',
+                                  vehicleTitle,
                                   maxLines: 2,
                                   overflow: TextOverflow.ellipsis,
                                   style: TextStyle(
@@ -506,7 +591,7 @@ class FocusedRouteView extends StatelessWidget {
                                 ),
                                 const SizedBox(height: 4),
                                 Text(
-                                  'Cerca de Villalongín · confianza alta',
+                                  vehicleSubtitle,
                                   maxLines: 2,
                                   overflow: TextOverflow.ellipsis,
                                   style: TextStyle(
@@ -527,7 +612,7 @@ class FocusedRouteView extends StatelessWidget {
                               borderRadius: BorderRadius.circular(14),
                             ),
                             child: Text(
-                              '4-6 min',
+                              simEta,
                               style: TextStyle(
                                 fontSize: compact ? 15 : 17,
                                 fontWeight: FontWeight.w700,
@@ -555,8 +640,31 @@ class FocusedRouteView extends StatelessWidget {
                   'Paradas en secuencia',
                   style: TextStyle(fontSize: 25, fontWeight: FontWeight.w800),
                 ),
+                if (isReal)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 6),
+                    child: Text(
+                      'Trazo OSM demo · ${route.polyline!.length} pts · estimado',
+                      style: const TextStyle(
+                        color: AppColors.muted,
+                        fontSize: 14,
+                      ),
+                    ),
+                  ),
                 const SizedBox(height: 18),
-                ...demoStops.map((stop) => StopTimelineItem(stop: stop)),
+                FutureBuilder<List<StopInfo>>(
+                  future: RoutesRepository.stopsFor(route),
+                  initialData: demoStops,
+                  builder: (context, snapshot) {
+                    final stops = snapshot.data ?? demoStops;
+                    return Column(
+                      children: [
+                        for (final stop in stops)
+                          StopTimelineItem(stop: stop),
+                      ],
+                    );
+                  },
+                ),
                 const SizedBox(height: 8),
                 OutlinedButton.icon(
                   onPressed: onService,
@@ -698,126 +806,163 @@ class BoardingSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final maxHeight = MediaQuery.sizeOf(context).height * 0.92;
     return Container(
+      constraints: BoxConstraints(maxHeight: maxHeight),
       padding: const EdgeInsets.fromLTRB(24, 16, 24, 28),
       decoration: const BoxDecoration(
         color: AppColors.cream,
         borderRadius: BorderRadius.vertical(top: Radius.circular(34)),
       ),
       child: SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 52,
-              height: 6,
-              decoration: BoxDecoration(
-                color: AppColors.line,
-                borderRadius: BorderRadius.circular(4),
-              ),
-            ),
-            const SizedBox(height: 26),
-            Container(
-              width: 112,
-              height: 112,
-              decoration: BoxDecoration(
-                color: AppColors.creamDark,
-                borderRadius: BorderRadius.circular(38),
-              ),
-              child: const Icon(
-                Icons.directions_bus,
-                color: AppColors.terracotta,
-                size: 54,
-              ),
-            ),
-            const SizedBox(height: 22),
-            Text(
-              'Ruta ${route.id} cerca de ti',
-              style: const TextStyle(fontSize: 29, fontWeight: FontWeight.w800),
-            ),
-            const SizedBox(height: 8),
-            const Text(
-              '¿Ya subiste al transporte?',
-              style: TextStyle(fontSize: 24, color: AppColors.ink),
-            ),
-            const SizedBox(height: 22),
-            SoftCard(
-              color: AppColors.creamDark,
-              borderColor: AppColors.creamDark,
-              child: const Column(
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final compact = constraints.maxWidth < 360;
+            final iconSize = compact ? 84.0 : 112.0;
+            final titleSize = compact ? 24.0 : 29.0;
+            final subtitleSize = compact ? 19.0 : 24.0;
+            return SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Row(
-                    children: [
-                      Icon(Icons.location_on_outlined),
-                      SizedBox(width: 12),
-                      Text(
-                        'Villalongín · 120 m',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      Spacer(),
-                      Icon(Icons.navigation_outlined),
-                      SizedBox(width: 8),
-                      Text(
-                        'Unidad a ~350 m',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
+                  Container(
+                    width: 52,
+                    height: 6,
+                    decoration: BoxDecoration(
+                      color: AppColors.line,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
                   ),
-                  Divider(height: 24),
+                  SizedBox(height: compact ? 16 : 26),
+                  Container(
+                    width: iconSize,
+                    height: iconSize,
+                    decoration: BoxDecoration(
+                      color: AppColors.creamDark,
+                      borderRadius: BorderRadius.circular(compact ? 28 : 38),
+                    ),
+                    child: Icon(
+                      Icons.directions_bus,
+                      color: AppColors.terracotta,
+                      size: compact ? 42 : 54,
+                    ),
+                  ),
+                  SizedBox(height: compact ? 14 : 22),
+                  Text(
+                    'Ruta ${route.id} cerca de ti',
+                    textAlign: TextAlign.center,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: titleSize,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    '¿Ya subiste al transporte?',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: subtitleSize,
+                      color: AppColors.ink,
+                    ),
+                  ),
+                  SizedBox(height: compact ? 14 : 22),
+                  SoftCard(
+                    color: AppColors.creamDark,
+                    borderColor: AppColors.creamDark,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: const [
+                            Icon(Icons.location_on_outlined, size: 22),
+                            SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                'Villalongín · 120 m',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        SizedBox(height: 8),
+                        Row(
+                          children: const [
+                            Icon(Icons.navigation_outlined, size: 22),
+                            SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                'Unidad a ~350 m',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        Divider(height: 24),
+                        Row(
+                          children: const [
+                            Flexible(
+                              child: StatusPill(
+                                label: 'Alta confianza',
+                                color: AppColors.green,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  SizedBox(height: compact ? 14 : 20),
+                  const Text(
+                    'Si confirmas, ayudas a mejorar los tiempos de llegada para otras personas. Sin presión: solo confirma si ya abordaste.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 16,
+                      height: 1.45,
+                      color: Color(0xFF40506A),
+                    ),
+                  ),
+                  SizedBox(height: compact ? 16 : 22),
+                  PrimaryButton(
+                    label: 'Sí, ya estoy a bordo',
+                    icon: Icons.check,
+                    onPressed: () => Navigator.pop(context, true),
+                  ),
+                  const SizedBox(height: 12),
                   Row(
                     children: [
-                      StatusPill(
-                        label: 'Alta confianza',
-                        color: AppColors.green,
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: () => Navigator.pop(context, false),
+                          style: _secondaryButtonStyle(),
+                          child: const Text('No subí'),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: () => Navigator.pop(context, false),
+                          style: _secondaryButtonStyle(),
+                          child: const Text('Ahora no'),
+                        ),
                       ),
                     ],
                   ),
                 ],
               ),
-            ),
-            const SizedBox(height: 20),
-            const Text(
-              'Si confirmas, ayudas a mejorar los tiempos de llegada para otras personas. Sin presión: solo confirma si ya abordaste.',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 16,
-                height: 1.45,
-                color: Color(0xFF40506A),
-              ),
-            ),
-            const SizedBox(height: 22),
-            PrimaryButton(
-              label: 'Sí, ya estoy a bordo',
-              icon: Icons.check,
-              onPressed: () => Navigator.pop(context, true),
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: () => Navigator.pop(context, false),
-                    style: _secondaryButtonStyle(),
-                    child: const Text('No subí'),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: () => Navigator.pop(context, false),
-                    style: _secondaryButtonStyle(),
-                    child: const Text('Ahora no'),
-                  ),
-                ),
-              ],
-            ),
-          ],
+            );
+          },
         ),
       ),
     );
@@ -825,10 +970,16 @@ class BoardingSheet extends StatelessWidget {
 }
 
 class ActiveTripView extends StatelessWidget {
-  const ActiveTripView({required this.route, required this.onExit, super.key});
+  const ActiveTripView({
+    required this.route,
+    required this.onExit,
+    required this.onBack,
+    super.key,
+  });
 
   final TransitRoute route;
   final VoidCallback onExit;
+  final VoidCallback onBack;
 
   @override
   Widget build(BuildContext context) {
@@ -836,29 +987,32 @@ class ActiveTripView extends StatelessWidget {
       child: Column(
         children: [
           Container(
-            padding: const EdgeInsets.fromLTRB(24, 24, 24, 28),
+            padding: const EdgeInsets.fromLTRB(16, 16, 24, 28),
             color: AppColors.green,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    const StatusPill(
-                      label: 'Viaje activo',
-                      color: AppColors.green,
-                      background: Color(0xFFE1F4E8),
+                    IconButton(
+                      onPressed: onBack,
+                      icon: const Icon(Icons.arrow_back, color: Colors.white),
+                      tooltip: 'Volver al mapa',
+                      style: IconButton.styleFrom(
+                        backgroundColor: const Color(0x22FFFFFF),
+                        fixedSize: const Size(48, 48),
+                      ),
                     ),
-                    Row(
-                      children: [
-                        const Icon(Icons.wifi, color: Colors.white),
-                        const SizedBox(width: 8),
-                        Text(
-                          'Conectado',
-                          style: TextStyle(color: Colors.white, fontSize: 17),
-                        ),
-                      ],
+                    const SizedBox(width: 8),
+                    const Expanded(
+                      child: StatusPill(
+                        label: 'Viaje activo',
+                        color: AppColors.green,
+                        background: Color(0xFFE1F4E8),
+                      ),
                     ),
+                    const SizedBox(width: 8),
+                    const Icon(Icons.wifi, color: Colors.white),
                   ],
                 ),
                 const SizedBox(height: 28),
@@ -1078,24 +1232,6 @@ class ActiveTripView extends StatelessWidget {
       ),
     );
   }
-}
-
-class _BackButton extends StatelessWidget {
-  const _BackButton({required this.onPressed});
-
-  final VoidCallback onPressed;
-
-  @override
-  Widget build(BuildContext context) => IconButton.filled(
-    onPressed: onPressed,
-    icon: const Icon(Icons.home_rounded, size: 28),
-    style: IconButton.styleFrom(
-      backgroundColor: Colors.white,
-      foregroundColor: AppColors.ink,
-      fixedSize: const Size(66, 66),
-      side: const BorderSide(color: AppColors.line, width: 1.5),
-    ),
-  );
 }
 
 class _SelectableFilterChip extends StatelessWidget {

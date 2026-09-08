@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Rutas Morelia — verificador visual</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  html, body, #map { height: 100%; margin: 0; font-family: system-ui, sans-serif; }
+  #panel {
+    position: absolute; top: 10px; left: 10px; z-index: 1000;
+    background: #fff; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,.3);
+    padding: 10px; width: 260px; max-height: calc(100% - 20px); display: flex; flex-direction: column;
+  }
+  #panel h3 { margin: 0 0 8px; font-size: 14px; }
+  #search input { width: 100%; box-sizing: border-box; padding: 5px; margin-bottom: 6px; border:1px solid #ccc; border-radius:4px }
+  #list { overflow-y: auto; flex: 1; }
+  .row { display: flex; align-items: center; gap: 6px; padding: 2px 0; font-size: 12.5px; cursor: pointer; }
+  .row input { margin: 0; }
+  .row .count { color: #888; margin-left: auto; font-size: 11px; }
+  .row i { color: #999; font-style: normal; font-size: 11px; }
+  .unnamed-block { margin-top: 6px; border-top: 1px dashed #ccc; padding-top: 4px; }
+  .unnamed-block summary { cursor: pointer; font-size: 12px; color: #666; font-weight: 700; user-select: none; }
+  #controls { margin-top: 8px; display: flex; gap: 6px; }
+  #controls button { flex:1; font-size: 12px; padding:4px; cursor:pointer; }
+  .legend-note { font-size: 11px; color:#666; margin-top:6px; line-height:1.4; }
+</style>
+</head>
+<body>
+<div id="panel">
+  <h3>Rutas combis/camiones — Morelia</h3>
+  <div id="search"><input id="q" placeholder="Buscar ruta (p. ej. Roja 2)…"></div>
+  <div id="list"></div>
+  <div id="controls">
+    <button id="all">Todas</button>
+    <button id="none">Ninguna</button>
+  </div>
+  <div class="legend-note">Base: OpenStreetMap · Línea continua = ruta con nombre, gris discontinua = sin nombre en OSM<br>(ODbL · © OSM contribuidores)</div>
+</div>
+<div id="map"></div>
+
+<script>
+const map = L.map('map').setView([19.70, -101.19], 13);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contribuidores'
+}).addTo(map);
+
+const colors = [
+  '#e6194B','#3cb44b','#4363d8','#f58231','#911eb4','#f032e6','#bfef45','#42d4f4',
+  '#fabed4','#469990','#dcbeff','#9A6324','#800000','#aaffc3','#808000','#000075'
+];
+function colorFor(i){ return colors[i % colors.length]; }
+
+let routeLayer = L.geoJSON(null, {
+  style: f => f.properties.sin_nombre
+    ? { color: '#6b6b6b', weight: 2, opacity: 0.7, dashArray: '5 7' }
+    : { color: colorFor(routeIndex.get(f)), weight: 3, opacity: 0.85 },
+  onEachFeature: (f, layer) => {
+    if (f.properties.sin_nombre) {
+      layer.bindPopup(`<b>${esc(f.properties.nombre)}</b><br>relación OSM: ${f.properties.osmid} · sin nombre en OpenStreetMap`);
+    }
+  }
+});
+routeLayer.addTo(map);
+
+let stopLayer = L.geoJSON(null, {
+  pointToLayer: (f, latlng) => L.circleMarker(latlng, {radius:3, color:'#333', weight:1, fillColor:'#ff8', fillOpacity:.9}),
+  onEachFeature: (f, layer) => {
+    const n = f.properties.nombre || '(sin nombre)';
+    const rs = (f.properties.rutas||[]).join(', ');
+    layer.bindTooltip(`<b>${n}</b><br>${rs}`, {direction:'top'});
+  }
+});
+stopLayer.addTo(map);
+
+let features = [];
+let routeIndex = new Map();
+
+fetch('rutas_liviano.geojson')
+  .then(r => r.json())
+  .then(fc => {
+    features = fc.features;
+    features.forEach((f,i) => routeIndex.set(f, i));
+    routeLayer.addData(features);
+    renderList(features);
+    // layer checkbox default: show all
+  });
+
+fetch('paradas_liviano.geojson')
+  .then(r => r.json())
+  .then(fc => stopLayer.addData(fc.features));
+
+const listEl = document.getElementById('list');
+let rendered = [];
+
+function renderList(fs){
+  const q = document.getElementById('q').value.toLowerCase();
+  const matches = fs.filter(f => (f.properties.nombre || f.properties.ref || '').toLowerCase().includes(q));
+  const named = matches.filter(f => !f.properties.sin_nombre);
+  const unnamed = matches.filter(f => f.properties.sin_nombre);
+  rendered = matches.map((f,i) => ({
+    name: f.properties.nombre || f.properties.ref,
+    idx: i, checked: true
+  }));
+  listEl.innerHTML = '';
+
+  function addRow(f, idx){
+    const row = document.createElement('label');
+    row.className = 'row';
+    const n = esc(f.properties.nombre || f.properties.ref);
+    const tag = f.properties.sin_nombre ? ' <i>(sin nombre)</i>' : '';
+    row.innerHTML = `<input type="checkbox" data-idx="${idx}" checked>
+      <span>${n}${tag}</span>`;
+    row.querySelector('input').addEventListener('change', e => {
+      const layer = routeLayer.getLayer(features[idx].__layerId);
+      if(layer){ layer.setStyle({opacity: e.target.checked ? .85 : 0}); }
+    });
+    listEl.appendChild(row);
+  }
+
+  named.forEach(f => addRow(f, features.indexOf(f)));
+  if (unnamed.length) {
+    const details = document.createElement('details');
+    details.className = 'unnamed-block';
+    const summary = document.createElement('summary');
+    summary.textContent = `Rutas sin nombre (${unnamed.length})`;
+    details.appendChild(summary);
+    const wrap = document.createElement('div');
+    unnamed.forEach(f => addRow(f, features.indexOf(f)));
+    // re-parent rows into the details body
+    const rows = [...listEl.children].filter(el => el.classList.contains('row'));
+    rows.slice(named.length).forEach(el => wrap.appendChild(el));
+    details.appendChild(wrap);
+    listEl.appendChild(details);
+  }
+}
+
+function esc(s){ return s.replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+
+document.getElementById('q').addEventListener('input', () => renderList(features));
+document.getElementById('all').addEventListener('click', () => {
+  routeLayer.setStyle({opacity:.85});
+  rendered.forEach(r => r.checked=true);
+  document.querySelectorAll('#list input').forEach(i => i.checked=true);
+});
+document.getElementById('none').addEventListener('click', () => {
+  routeLayer.setStyle({opacity:0});
+  rendered.forEach(r => r.checked=false);
+  document.querySelectorAll('#list input').forEach(i => i.checked=false);
+});
+</script>
+</body>
+</html>

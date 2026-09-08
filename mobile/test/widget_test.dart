@@ -83,4 +83,61 @@ void main() {
     expect(find.text('Cerca de mí'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('boarding sheet is scrollable on compact screens', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(320, 640));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(const MoreliaConectaApp());
+    await tester.ensureVisible(find.byType(SelectableRouteCard).first);
+    await tester.tap(
+      find.byType(SelectableRouteCard).first,
+      warnIfMissed: false,
+    );
+    await tester.pump();
+    await tester.drag(find.byType(Scrollable).first, const Offset(0, -700));
+    await tester.pump();
+    await tester.tap(find.text('Ver en el mapa'));
+    await tester.pump();
+    await tester.tap(find.textContaining('Unidad'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('¿Ya subiste al transporte?'), findsOneWidget);
+    expect(find.text('Sí, ya estoy a bordo'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('active trip has back affordance and does not trap user', (
+    tester,
+  ) async {
+    await tester.pumpWidget(const MoreliaConectaApp());
+    await tester.ensureVisible(find.byType(SelectableRouteCard).first);
+    await tester.tap(
+      find.byType(SelectableRouteCard).first,
+      warnIfMissed: false,
+    );
+    await tester.pump();
+    await tester.drag(find.byType(Scrollable).first, const Offset(0, -700));
+    await tester.pump();
+    await tester.tap(find.text('Ver en el mapa'));
+    await tester.pump();
+    await tester.tap(find.textContaining('Unidad'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Sí, ya estoy a bordo'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Sí, ya estoy a bordo'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Viaje activo'), findsOneWidget);
+    expect(find.byTooltip('Volver al mapa'), findsOneWidget);
+    expect(find.text('Bajarme'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Volver al mapa'));
+    await tester.pump();
+    // Minimizar vuelve al mapa en vez de cerrar la app.
+    expect(find.text('Paradas en secuencia'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 }
