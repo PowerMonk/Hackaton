@@ -35,7 +35,7 @@ abstract interface class MobilityApi {
   Future<Map<String, dynamic>> getEta(String stopId);
   Future<String> openBoardingSession(String routeId);
   Future<void> closeBoardingSession(String sessionId);
-  Future<void> postLocation(Map<String, dynamic> sample);
+  Future<Map<String, dynamic>> postLocation(Map<String, dynamic> sample);
   Stream<Map<String, dynamic>> watchRoute(String routeId);
   Future<List<Map<String, dynamic>>> autocomplete(String query, {int limit = 5});
 }

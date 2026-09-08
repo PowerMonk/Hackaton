@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import '../models/mobility_models.dart';
+import '../models/proximity_models.dart';
 import 'api_contracts.dart';
 import 'location_source.dart';
 
@@ -68,6 +69,8 @@ class TripSessionController {
     required this.mode,
     this.onError,
     this.onVehicleUpdate,
+    this.onBoardingStateUpdate,
+    this.onProximityNotification,
     DateTime Function()? now,
   }) : _now = now ?? DateTime.now;
 
@@ -76,20 +79,34 @@ class TripSessionController {
   final AppMode mode;
   final void Function(String message)? onError;
   final void Function(List<VehicleUpdate> vehicles)? onVehicleUpdate;
+  final void Function(BoardingState state)? onBoardingStateUpdate;
+  final void Function(ProximityNotification notification)? onProximityNotification;
   final DateTime Function() _now;
 
   StreamSubscription<LocationSample>? _locationSubscription;
   StreamSubscription<Map<String, dynamic>>? _mobilitySubscription;
   String? _sessionId;
+  String? _routeId;
   DateTime? _lastSentAt;
 
   // Expose vehicle stream
   final _vehicleController = StreamController<List<VehicleUpdate>>.broadcast();
   Stream<List<VehicleUpdate>> get vehicleStream => _vehicleController.stream;
 
+  // Expose boarding state stream
+  final _boardingStateController = StreamController<BoardingState>.broadcast();
+  Stream<BoardingState> get boardingStateStream => _boardingStateController.stream;
+
   // Latest vehicles
   List<VehicleUpdate> _latestVehicles = [];
   List<VehicleUpdate> get latestVehicles => _latestVehicles;
+
+  // Latest boarding state
+  BoardingState _boardingState = BoardingState.empty;
+  BoardingState get boardingState => _boardingState;
+
+  // Session ID for external access
+  String? get sessionId => _sessionId;
 
   Future<TripStartResult> start(String routeId) async {
     await stop();
@@ -107,7 +124,9 @@ class TripSessionController {
       }
 
       _sessionId = await api.openBoardingSession(routeId);
+      _routeId = routeId;
       _lastSentAt = null;
+      _boardingState = BoardingState.empty;
       _locationSubscription = locationSource.locationStream.listen(
         (sample) => unawaited(_sendLocation(sample)),
         onError: (Object error, StackTrace _) => _report(error),
@@ -176,6 +195,7 @@ class TripSessionController {
 
   void dispose() {
     _vehicleController.close();
+    _boardingStateController.close();
   }
 
   Future<void> _sendLocation(LocationSample sample) async {
@@ -183,7 +203,20 @@ class TripSessionController {
     if (sessionId == null || !_isDue(sample)) return;
     _lastSentAt = _now();
     try {
-      await api.postLocation(sample.toJson(sessionId: sessionId));
+      final response = await api.postLocation(sample.toJson(sessionId: sessionId));
+
+      // Process boarding state from response if available
+      final boardingStateJson = response['boardingState'] as Map<String, dynamic>?;
+      if (boardingStateJson != null) {
+        _boardingState = BoardingState.fromJson(boardingStateJson);
+        _boardingStateController.add(_boardingState);
+        onBoardingStateUpdate?.call(_boardingState);
+
+        // Process notifications
+        for (final notification in _boardingState.notifications) {
+          onProximityNotification?.call(notification);
+        }
+      }
     } catch (error) {
       _report(error);
     }

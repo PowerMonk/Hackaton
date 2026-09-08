@@ -304,6 +304,104 @@ export async function handleRequest(
     }
 
     // ========================================================================
+    // Proximity / Boarding State
+    // ========================================================================
+
+    if (path.match(/^\/boarding-sessions\/[^/]+\/state$/) && method === "GET") {
+      const sessionId = decodeURIComponent(path.split("/")[2]);
+
+      if (!serverState.dbConnected) {
+        return error("Database not available", 503);
+      }
+
+      const { detectBoardingState, findNearbyStops } = await import("../services/proximity");
+
+      // Get session info
+      const sessionResult = await import("../db/connection").then(m => m.sql)`
+        SELECT
+          bs.route_id,
+          bs.current_progress,
+          bs.current_speed,
+          bs.destination_stop_id,
+          ls.lat,
+          ls.lon,
+          ls.matched_route_id,
+          ls.route_progress,
+          ls.distance_from_route
+        FROM boarding_sessions bs
+        LEFT JOIN LATERAL (
+          SELECT lat, lon, matched_route_id, route_progress, distance_from_route
+          FROM location_samples
+          WHERE session_id = bs.id
+          ORDER BY created_at DESC
+          LIMIT 1
+        ) ls ON true
+        WHERE bs.id = ${sessionId} AND bs.ended_at IS NULL
+      `;
+
+      if (sessionResult.length === 0) {
+        return error("Session not found or already ended", 404);
+      }
+
+      const session = sessionResult[0];
+      if (session.lat === null || session.lon === null) {
+        // No location samples yet - just return nearby stops
+        return json({
+          isNearStop: false,
+          isOnVehicle: false,
+          nearbyStops: [],
+          currentRouteId: session.route_id,
+          routeProgress: session.current_progress,
+          lastStopId: null,
+          boardedAt: null,
+          events: [],
+          notifications: [],
+        });
+      }
+
+      const boardingState = await detectBoardingState(
+        sessionId,
+        { lat: Number(session.lat), lon: Number(session.lon) },
+        session.current_speed,
+        session.matched_route_id,
+        session.route_progress !== null ? Number(session.route_progress) : null,
+        session.distance_from_route !== null ? Number(session.distance_from_route) : null
+      );
+
+      const { generateNotifications } = await import("../services/proximity");
+      const notifications = generateNotifications(
+        boardingState,
+        session.matched_route_id,
+        session.destination_stop_id
+      );
+
+      return json({ ...boardingState, notifications });
+    }
+
+    if (path.match(/^\/boarding-sessions\/[^/]+\/destination$/) && method === "PUT") {
+      const sessionId = decodeURIComponent(path.split("/")[2]);
+      const body = await req.json() as Record<string, unknown>;
+      const destinationStopId = body.stopId as string | undefined;
+
+      if (!destinationStopId) {
+        return error("stopId is required", 422);
+      }
+
+      if (!serverState.dbConnected) {
+        return error("Database not available", 503);
+      }
+
+      const { sql } = await import("../db/connection");
+      await sql`
+        UPDATE boarding_sessions
+        SET destination_stop_id = ${destinationStopId}
+        WHERE id = ${sessionId} AND ended_at IS NULL
+      `;
+
+      return json({ success: true, sessionId, destinationStopId });
+    }
+
+    // ========================================================================
     // Route Planning
     // ========================================================================
 

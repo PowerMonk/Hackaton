@@ -162,15 +162,14 @@ class HttpMobilityApi implements MobilityApi, RoutePlanningApi {
   }
 
   @override
-  Future<void> postLocation(Map<String, dynamic> sample) async {
-    await _jsonRequest(
-      () => _client.post(
-        _endpoint('/locations'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode(sample),
-      ),
-    );
-  }
+  Future<Map<String, dynamic>> postLocation(Map<String, dynamic> sample) =>
+      _jsonRequest(
+        () => _client.post(
+          _endpoint('/locations'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode(sample),
+        ),
+      );
 
   @override
   Stream<Map<String, dynamic>> watchRoute(String routeId) {

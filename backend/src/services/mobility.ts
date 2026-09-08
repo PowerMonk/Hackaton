@@ -24,10 +24,19 @@ import {
   type VehicleObservation,
 } from "./vehicle-clustering";
 import { broadcastVehicleUpdate } from "../routes/websocket";
+import {
+  detectBoardingState,
+  updateSessionBoardingState,
+  generateNotifications,
+  type BoardingState,
+  type ProximityNotification,
+} from "./proximity";
 
 export interface LocationProcessingResult extends ProcessedSample {
   persisted: boolean;
   virtualVehicleId: string | null;
+  boardingState?: BoardingState;
+  notifications?: ProximityNotification[];
   confidence: VirtualVehicle["confidence"] | null;
 }
 
@@ -281,6 +290,38 @@ export async function processLocationSample(
     broadcastVehicleUpdate(vehicles);
   }
 
+  // Detect boarding state and proximity events (for real location samples only)
+  let boardingState: BoardingState | undefined;
+  let notifications: ProximityNotification[] | undefined;
+
+  if (!sample.isSimulated) {
+    try {
+      boardingState = await detectBoardingState(
+        sample.sessionId,
+        { lat: sample.lat, lon: sample.lon },
+        speedKmh,
+        matchedRouteId,
+        routeProgress,
+        distanceFromRoute
+      );
+
+      // Update session with boarding state
+      await updateSessionBoardingState(sample.sessionId, boardingState);
+
+      // Get destination from session for notifications
+      const sessionDest = await sql`
+        SELECT destination_stop_id FROM boarding_sessions
+        WHERE id = ${sample.sessionId}
+      `;
+      const destinationStopId = sessionDest[0]?.destination_stop_id ?? null;
+
+      // Generate notifications
+      notifications = generateNotifications(boardingState, matchedRouteId, destinationStopId);
+    } catch (error) {
+      console.warn("Proximity detection failed:", error);
+    }
+  }
+
   return {
     ...sample,
     matchedRouteId,
@@ -291,6 +332,8 @@ export async function processLocationSample(
     persisted: true,
     virtualVehicleId,
     confidence,
+    boardingState,
+    notifications,
   };
 }
 
