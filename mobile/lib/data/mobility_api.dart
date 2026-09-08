@@ -158,22 +158,84 @@ class HttpMobilityApi implements MobilityApi, RoutePlanningApi {
   }
 
   @override
-  Stream<Map<String, dynamic>> watchRoute(String routeId) async* {
-    final socket = await _webSocketConnector(
-      _baseUri.replace(
-        scheme: _baseUri.scheme == 'https' ? 'wss' : 'ws',
-        path: '/ws/mobility',
-        query: '',
-      ),
-    );
-    try {
-      socket.add(jsonEncode({'type': 'subscribe', 'routeId': routeId}));
-      await for (final message in socket) {
-        final decoded = jsonDecode(message.toString());
-        if (decoded is Map) yield decoded.cast<String, dynamic>();
+  Stream<Map<String, dynamic>> watchRoute(String routeId) {
+    return _reconnectingWebSocketStream(routeId);
+  }
+
+  /// Creates a WebSocket stream with automatic reconnection.
+  Stream<Map<String, dynamic>> _reconnectingWebSocketStream(String routeId) async* {
+    const maxRetries = 5;
+    const initialBackoff = Duration(seconds: 1);
+    const maxBackoff = Duration(seconds: 30);
+
+    int retryCount = 0;
+    Duration backoff = initialBackoff;
+
+    while (true) {
+      try {
+        final socket = await _webSocketConnector(
+          _baseUri.replace(
+            scheme: _baseUri.scheme == 'https' ? 'wss' : 'ws',
+            path: '/ws/mobility',
+            query: '',
+          ),
+        );
+
+        // Reset retry count on successful connection
+        retryCount = 0;
+        backoff = initialBackoff;
+
+        // Subscribe to route
+        socket.add(jsonEncode({'type': 'subscribe', 'routeId': routeId}));
+
+        try {
+          await for (final message in socket) {
+            final decoded = jsonDecode(message.toString());
+            if (decoded is Map) {
+              final data = decoded.cast<String, dynamic>();
+              final type = data['type'] as String?;
+
+              // Handle both vehicle_update and vehicle_snapshot
+              if (type == 'vehicle_update' || type == 'vehicle_snapshot') {
+                yield data;
+              } else if (type == 'connected' || type == 'subscribed') {
+                // Connection/subscription confirmations - can yield for logging
+                yield data;
+              } else if (type == 'pong') {
+                // Heartbeat response - ignore
+              } else if (type == 'error') {
+                // Server error
+                final payload = data['payload'] as Map<String, dynamic>?;
+                throw MobilityApiException(
+                  payload?['message'] as String? ?? 'WebSocket error',
+                );
+              }
+            }
+          }
+        } finally {
+          await socket.close();
+        }
+
+        // If we get here, socket closed normally - break the loop
+        break;
+      } catch (e) {
+        retryCount++;
+        if (retryCount > maxRetries) {
+          // Max retries exceeded, give up
+          throw MobilityApiException(
+            'WebSocket connection failed after $maxRetries retries: $e',
+          );
+        }
+
+        // Wait before retrying with exponential backoff
+        await Future<void>.delayed(backoff);
+        backoff = Duration(
+          milliseconds: (backoff.inMilliseconds * 2).clamp(
+            initialBackoff.inMilliseconds,
+            maxBackoff.inMilliseconds,
+          ),
+        );
       }
-    } finally {
-      await socket.close();
     }
   }
 

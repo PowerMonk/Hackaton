@@ -43,6 +43,8 @@ class _MapScreenState extends State<MapScreen> {
   double? locationAccuracy;
   LocationPermissionState locationPermission = LocationPermissionState.denied;
   String? locationError;
+  List<VehicleUpdate> _vehicles = [];
+  StreamSubscription<List<VehicleUpdate>>? _vehicleSubscription;
 
   @override
   void initState() {
@@ -61,8 +63,10 @@ class _MapScreenState extends State<MapScreen> {
   @override
   void dispose() {
     unawaited(_localLocationSubscription?.cancel());
+    unawaited(_vehicleSubscription?.cancel());
     unawaited(_localLocationSource.stop());
     unawaited(_tripSession.stop());
+    _tripSession.dispose();
     super.dispose();
   }
 
@@ -177,6 +181,7 @@ class _MapScreenState extends State<MapScreen> {
           isLiveLocation: userPosition != null,
           connectionMode: tripConnectionMode,
           connectionError: tripConnectionError,
+          vehicles: _vehicles,
           onBack: () => setState(() => tripMinimized = true),
           onExit: () => unawaited(_endTrip()),
         ),
@@ -257,6 +262,19 @@ class _MapScreenState extends State<MapScreen> {
         ? await _tripSession.start(selectedRoute!.id)
         : const TripStartResult(mode: TripConnectionMode.localOnly);
     if (!mounted) return;
+
+    // Subscribe to vehicle updates from WebSocket
+    _vehicleSubscription?.cancel();
+    _vehicleSubscription = _tripSession.vehicleStream.listen((vehicles) {
+      if (mounted) {
+        setState(() => _vehicles = vehicles);
+      }
+    });
+    // Get initial vehicles if available
+    if (_tripSession.latestVehicles.isNotEmpty) {
+      _vehicles = _tripSession.latestVehicles;
+    }
+
     setState(() {
       activeTrip = true;
       tripMinimized = false;
@@ -296,6 +314,8 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   Future<void> _endTrip() async {
+    await _vehicleSubscription?.cancel();
+    _vehicleSubscription = null;
     await _tripSession.stop();
     if (!mounted) return;
     setState(() {
@@ -304,6 +324,7 @@ class _MapScreenState extends State<MapScreen> {
       routeFocused = selectedRoute != null;
       tripConnectionMode = TripConnectionMode.demo;
       tripConnectionError = null;
+      _vehicles = [];
     });
   }
 }
@@ -1339,6 +1360,7 @@ class ActiveTripView extends StatelessWidget {
     required this.onExit,
     required this.onBack,
     this.connectionError,
+    this.vehicles = const [],
     super.key,
   });
 
@@ -1348,6 +1370,7 @@ class ActiveTripView extends StatelessWidget {
   final double? locationAccuracy;
   final bool isLiveLocation;
   final String? connectionError;
+  final List<VehicleUpdate> vehicles;
   final VoidCallback onExit;
   final VoidCallback onBack;
 
@@ -1474,10 +1497,13 @@ class ActiveTripView extends StatelessWidget {
           DemoMap(
             route: route,
             height: 390,
-            showDemoLabel: !isLiveLocation,
+            showDemoLabel: !isLiveLocation && vehicles.isEmpty,
             userPosition: userPosition,
             locationAccuracy: locationAccuracy,
             isLiveLocation: isLiveLocation,
+            vehicles: vehicles,
+            showFreshnessInfo: vehicles.isNotEmpty,
+            lastUpdateAt: vehicles.isNotEmpty ? vehicles.first.lastUpdateAt : null,
           ),
           Padding(
             padding: const EdgeInsets.all(22),

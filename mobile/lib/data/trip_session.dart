@@ -130,7 +130,9 @@ class TripSessionController {
 
   void _processWebSocketMessage(Map<String, dynamic> message) {
     final type = message['type'] as String?;
-    if (type == 'vehicle_update') {
+
+    // Handle both vehicle_update and vehicle_snapshot (initial data)
+    if (type == 'vehicle_update' || type == 'vehicle_snapshot') {
       final payload = message['payload'] as Map<String, dynamic>?;
       if (payload == null) return;
 
@@ -143,8 +145,15 @@ class TripSessionController {
       _latestVehicles = vehicles;
       _vehicleController.add(vehicles);
       onVehicleUpdate?.call(vehicles);
+    } else if (type == 'connected') {
+      // Connection established - no action needed
+    } else if (type == 'subscribed') {
+      // Subscription confirmed - initial snapshot should follow
+    } else if (type == 'error') {
+      final payload = message['payload'] as Map<String, dynamic>?;
+      final errorMsg = payload?['message'] as String? ?? 'WebSocket error';
+      onError?.call(errorMsg);
     }
-    // Handle other message types as needed
   }
 
   Future<void> stop() async {

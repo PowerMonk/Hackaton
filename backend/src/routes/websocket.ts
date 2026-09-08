@@ -5,6 +5,7 @@
 
 import type { ServerWebSocket } from "bun";
 import type { VirtualVehicle, WsMessage, EtaResult } from "../types";
+import { getVirtualVehicles } from "../services/mobility";
 
 interface WsData {
   connectedAt: number;
@@ -54,7 +55,30 @@ export const handleWebSocket = {
                 timestamp: Date.now(),
               })
             );
+
+            // Send initial snapshot of vehicles for this route
+            void sendInitialSnapshot(ws, data.routeId);
           }
+          break;
+
+        case "subscribe_all":
+          // Subscribe to all vehicle updates (no route filter)
+          ws.data.subscribedRoutes = undefined;
+          ws.send(
+            JSON.stringify({
+              type: "subscribed",
+              payload: { routeId: "all" },
+              timestamp: Date.now(),
+            })
+          );
+
+          // Send initial snapshot of all vehicles
+          void sendInitialSnapshot(ws, undefined);
+          break;
+
+        case "get_snapshot":
+          // Request current vehicle snapshot without subscribing
+          void sendInitialSnapshot(ws, data.routeId);
           break;
 
         case "unsubscribe":
@@ -105,6 +129,43 @@ export const handleWebSocket = {
     clients.delete(ws);
   },
 };
+
+// ============================================================================
+// Initial Snapshot
+// ============================================================================
+
+/**
+ * Send initial vehicle snapshot to a newly subscribed client
+ */
+async function sendInitialSnapshot(
+  ws: ServerWebSocket<WsData>,
+  routeId: string | undefined
+): Promise<void> {
+  try {
+    const vehicles = await getVirtualVehicles(routeId);
+
+    const message: WsMessage = {
+      type: "vehicle_snapshot",
+      payload: {
+        vehicles,
+        routeId: routeId ?? "all",
+        isInitial: true,
+      },
+      timestamp: Date.now(),
+    };
+
+    ws.send(JSON.stringify(message));
+  } catch (error) {
+    console.error("Error sending initial snapshot:", error);
+    ws.send(
+      JSON.stringify({
+        type: "error",
+        payload: { message: "Failed to fetch vehicle snapshot" },
+        timestamp: Date.now(),
+      })
+    );
+  }
+}
 
 // ============================================================================
 // Broadcast Functions
