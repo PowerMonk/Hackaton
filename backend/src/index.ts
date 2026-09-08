@@ -9,12 +9,14 @@ import { getAllRoutes, getRouteCount, getStopCount } from "./services/routes";
 import { processLocationSample, syncVehiclesToDatabase } from "./services/mobility";
 import { handleRequest } from "./routes/handler";
 import { handleWebSocket, broadcastVehicleUpdate } from "./routes/websocket";
+import { cleanupOldData, getDatabaseStats } from "./services/cleanup";
 
 const PORT = parseInt(process.env.PORT || "3000");
 const HOST = process.env.HOST || "0.0.0.0";
 const MOBILITY_MODE = process.env.MOBILITY_MODE || "demo";
 const MAX_CONCURRENT_SIMULATION_SAMPLES = 4;
 const VEHICLE_SYNC_INTERVAL_MS = 15_000;
+const CLEANUP_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
 
 console.log(`
 ╔═══════════════════════════════════════════════════════════╗
@@ -138,6 +140,24 @@ async function initializeServer() {
     simulation.start();
     serverState.simulationRunning = true;
     console.log("   ✓ Simulation started");
+  }
+
+  // Start periodic cleanup if database is connected
+  if (serverState.dbConnected) {
+    setInterval(() => {
+      void cleanupOldData({
+        sampleMaxAgeHours: 24,
+        sessionMaxAgeHours: 48,
+        staleVehicleMinutes: 5,
+      }).then((result) => {
+        if (result.samplesDeleted > 0 || result.sessionsDeleted > 0 || result.staleVehiclesDeleted > 0) {
+          console.log(`Cleanup: ${result.samplesDeleted} samples, ${result.sessionsDeleted} sessions, ${result.staleVehiclesDeleted} vehicles`);
+        }
+      }).catch((error) => {
+        console.error("Cleanup failed:", error);
+      });
+    }, CLEANUP_INTERVAL_MS);
+    console.log("   ✓ Scheduled cleanup every hour");
   }
 
   console.log(`

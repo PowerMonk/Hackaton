@@ -335,35 +335,87 @@ export async function getVirtualVehicles(routeId?: string): Promise<VirtualVehic
   return readLiveVehicles(routeId);
 }
 
+/**
+ * Batch sync vehicles to database using a single query.
+ * Much more efficient than individual INSERTs when syncing many vehicles.
+ */
 export async function syncVehiclesToDatabase(vehicles: VirtualVehicle[]): Promise<void> {
-  for (const vehicle of vehicles) {
-    await sql`
-      INSERT INTO virtual_vehicles (
-        id, route_id, progress, speed, heading,
-        passenger_count, confidence, current_location,
-        last_update_at, is_simulated
-      ) VALUES (
-        ${vehicle.id},
-        ${vehicle.routeId},
-        ${vehicle.progress},
-        ${vehicle.speed},
-        ${vehicle.heading},
-        ${vehicle.passengerCount},
-        ${vehicle.confidence}::confidence_level,
-        ST_SetSRID(ST_MakePoint(${vehicle.currentPosition.lon}, ${vehicle.currentPosition.lat}), 4326),
-        NOW(),
-        ${vehicle.isSimulated}
-      )
-      ON CONFLICT (id) DO UPDATE SET
-        progress = EXCLUDED.progress,
-        speed = EXCLUDED.speed,
-        heading = EXCLUDED.heading,
-        passenger_count = EXCLUDED.passenger_count,
-        confidence = EXCLUDED.confidence,
-        current_location = EXCLUDED.current_location,
-        last_update_at = NOW()
-    `;
+  if (vehicles.length === 0) return;
+
+  // Batch in chunks of 50 to avoid overly large queries
+  const BATCH_SIZE = 50;
+  for (let i = 0; i < vehicles.length; i += BATCH_SIZE) {
+    const batch = vehicles.slice(i, i + BATCH_SIZE);
+    await syncVehicleBatch(batch);
   }
+}
+
+async function syncVehicleBatch(vehicles: VirtualVehicle[]): Promise<void> {
+  if (vehicles.length === 0) return;
+
+  // Build arrays for UNNEST-based batch insert
+  const ids: string[] = [];
+  const routeIds: string[] = [];
+  const progresses: number[] = [];
+  const speeds: number[] = [];
+  const headings: number[] = [];
+  const passengerCounts: number[] = [];
+  const confidences: string[] = [];
+  const lons: number[] = [];
+  const lats: number[] = [];
+  const isSimulateds: boolean[] = [];
+
+  for (const v of vehicles) {
+    ids.push(v.id);
+    routeIds.push(v.routeId);
+    progresses.push(v.progress);
+    speeds.push(v.speed);
+    headings.push(v.heading);
+    passengerCounts.push(v.passengerCount);
+    confidences.push(v.confidence);
+    lons.push(v.currentPosition.lon);
+    lats.push(v.currentPosition.lat);
+    isSimulateds.push(v.isSimulated);
+  }
+
+  await sql`
+    INSERT INTO virtual_vehicles (
+      id, route_id, progress, speed, heading,
+      passenger_count, confidence, current_location,
+      last_update_at, is_simulated
+    )
+    SELECT
+      id,
+      route_id,
+      progress,
+      speed,
+      heading,
+      passenger_count,
+      confidence::confidence_level,
+      ST_SetSRID(ST_MakePoint(lon, lat), 4326),
+      NOW(),
+      is_simulated
+    FROM UNNEST(
+      ${ids}::text[],
+      ${routeIds}::text[],
+      ${progresses}::float8[],
+      ${speeds}::float8[],
+      ${headings}::float8[],
+      ${passengerCounts}::int[],
+      ${confidences}::text[],
+      ${lons}::float8[],
+      ${lats}::float8[],
+      ${isSimulateds}::boolean[]
+    ) AS t(id, route_id, progress, speed, heading, passenger_count, confidence, lon, lat, is_simulated)
+    ON CONFLICT (id) DO UPDATE SET
+      progress = EXCLUDED.progress,
+      speed = EXCLUDED.speed,
+      heading = EXCLUDED.heading,
+      passenger_count = EXCLUDED.passenger_count,
+      confidence = EXCLUDED.confidence,
+      current_location = EXCLUDED.current_location,
+      last_update_at = NOW()
+  `;
 }
 
 async function refreshLiveVehicles(): Promise<Map<string, LiveVehicleIdentity>> {

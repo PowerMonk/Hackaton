@@ -29,6 +29,7 @@ import {
 } from "../services/planner";
 import { getSimulation } from "../simulation/engine";
 import { parseLocationSample } from "../services/location-validation";
+import { getDatabaseStats, cleanupOldData } from "../services/cleanup";
 import type { LocationSample, RoutePlanRequest } from "../types";
 
 interface ServerState {
@@ -437,6 +438,33 @@ export async function handleRequest(
       }
 
       return json({ success: true, message: "Simulation reset" });
+    }
+
+    // ========================================================================
+    // Database Statistics (for monitoring)
+    // ========================================================================
+
+    if (path === "/admin/db-stats" && method === "GET") {
+      if (!serverState.dbConnected) {
+        return error("Database not connected", 503);
+      }
+
+      const stats = await getDatabaseStats();
+      return json(stats);
+    }
+
+    if (path === "/admin/cleanup" && method === "POST") {
+      if (!serverState.dbConnected) {
+        return error("Database not connected", 503);
+      }
+
+      const dryRun = url.searchParams.get("dryRun") === "true";
+      const result = await cleanupOldData({ dryRun });
+      return json({
+        ...result,
+        dryRun,
+        message: dryRun ? "Dry run - no data deleted" : "Cleanup completed",
+      });
     }
 
     // ========================================================================
