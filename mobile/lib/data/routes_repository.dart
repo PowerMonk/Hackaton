@@ -139,7 +139,12 @@ class RoutesRepository {
         if (best <= maxMeters) {
           final props = (f['properties'] as Map).cast<String, dynamic>();
           final nombre = (props['nombre'] as String?) ?? '(parada sin nombre)';
-          scored.add(_ScoredStop(nombre: nombre, index: bestIdx, isInferred: nombre.isEmpty));
+          scored.add(_ScoredStop(
+            nombre: nombre,
+            index: bestIdx,
+            position: pt,
+            isInferred: nombre.isEmpty,
+          ));
         }
       }
       scored.sort((a, b) => a.index.compareTo(b.index));
@@ -243,8 +248,79 @@ class RoutesRepository {
 }
 
 class _ScoredStop {
-  _ScoredStop({required this.nombre, required this.index, this.isInferred = false});
+  _ScoredStop({
+    required this.nombre,
+    required this.index,
+    required this.position,
+    this.isInferred = false,
+  });
   final String nombre;
   final int index;
+  final LatLng position;
   final bool isInferred;
+}
+
+/// Stop with coordinates for map rendering.
+class StopWithCoords {
+  const StopWithCoords({
+    required this.id,
+    required this.name,
+    required this.position,
+    this.isInferred = false,
+    this.distanceToRoute = 0,
+  });
+
+  final String id;
+  final String name;
+  final LatLng position;
+  final bool isInferred;
+  final double distanceToRoute;
+}
+
+extension StopsWithCoordsExtension on RoutesRepository {
+  /// Get stops with coordinates for a route (for map rendering).
+  static Future<List<StopWithCoords>> stopsWithCoordsFor(
+    TransitRoute route, {
+    double maxMeters = 350,
+  }) async {
+    if (!route.tieneGeometriaReal) return [];
+    try {
+      final raw = await rootBundle.loadString(RoutesRepository._paradasAsset);
+      final fc = json.decode(raw) as Map<String, dynamic>;
+      final features = (fc['features'] as List).cast<Map<String, dynamic>>();
+      const dist = Distance();
+      final result = <StopWithCoords>[];
+      final allPts = route.allPoints;
+      if (allPts.isEmpty) return [];
+
+      for (final f in features) {
+        final geom = (f['geometry'] as Map).cast<String, dynamic>();
+        final coords = (geom['coordinates'] as List).cast<num>();
+        final pt = LatLng(coords[1].toDouble(), coords[0].toDouble());
+        var best = double.infinity;
+        for (final routePt in allPts) {
+          final d = dist(routePt, pt);
+          if (d < best) best = d;
+        }
+        if (best <= maxMeters) {
+          final props = (f['properties'] as Map).cast<String, dynamic>();
+          final nombre = (props['nombre'] as String?) ?? '';
+          final id = f['id']?.toString() ??
+              'stop-${coords[1].toStringAsFixed(5)}-${coords[0].toStringAsFixed(5)}';
+          result.add(StopWithCoords(
+            id: id,
+            name: nombre.isEmpty ? '(Parada sin nombre)' : nombre,
+            position: pt,
+            isInferred: nombre.isEmpty,
+            distanceToRoute: best,
+          ));
+        }
+      }
+      // Sort by distance to route
+      result.sort((a, b) => a.distanceToRoute.compareTo(b.distanceToRoute));
+      return result;
+    } catch (_) {
+      return [];
+    }
+  }
 }

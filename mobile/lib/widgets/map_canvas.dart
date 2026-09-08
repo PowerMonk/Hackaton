@@ -3,6 +3,8 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../data/demo_simulation.dart';
+import '../data/routes_repository.dart';
+import '../data/trip_session.dart';
 import '../models/app_models.dart';
 import '../theme/app_theme.dart';
 
@@ -15,6 +17,10 @@ class DemoMap extends StatelessWidget {
     this.showDemoLabel = false,
     this.showRoute = true,
     this.height = 400,
+    this.vehicles = const [],
+    this.stops = const [],
+    this.showFreshnessInfo = false,
+    this.lastUpdateAt,
     super.key,
   });
 
@@ -25,6 +31,18 @@ class DemoMap extends StatelessWidget {
   final bool showDemoLabel;
   final bool showRoute;
   final double height;
+
+  /// Real vehicles from WebSocket/API.
+  final List<VehicleUpdate> vehicles;
+
+  /// Real stops from backend/GeoJSON.
+  final List<StopWithCoords> stops;
+
+  /// Show freshness/timestamp info on the map.
+  final bool showFreshnessInfo;
+
+  /// Last update timestamp for freshness display.
+  final DateTime? lastUpdateAt;
 
   static const demoUserPosition = LatLng(19.70234, -101.18492);
   static const demoVehiclePosition = LatLng(19.70452, -101.19006);
@@ -72,8 +90,93 @@ class DemoMap extends StatelessWidget {
     return DemoSimulation().positionAt(_allPoints, 0.55);
   }
 
-  // ELIMINADO: _simStops con puntos sintéticos
-  // Las paradas reales deben venir del repositorio, no generarse aquí
+  /// Returns true if we have real vehicles from WebSocket.
+  bool get _hasRealVehicles => vehicles.isNotEmpty;
+
+  /// Returns true if we have real stops.
+  bool get _hasRealStops => stops.isNotEmpty;
+
+  /// Generates vehicle markers - prefers real vehicles, falls back to simulated.
+  List<Marker> get _vehicleMarkers {
+    if (_hasRealVehicles) {
+      return vehicles.map((v) => Marker(
+        point: LatLng(v.lat, v.lon),
+        width: 58,
+        height: 58,
+        child: _VehicleMarker(
+          speed: v.speed,
+          confidence: v.confidence,
+          heading: v.heading,
+          isSimulated: v.isSimulated,
+        ),
+      )).toList();
+    }
+
+    // Fallback to single demo vehicle
+    if (showRoute) {
+      return [
+        Marker(
+          point: _simVehicle,
+          width: 58,
+          height: 58,
+          child: const _VehicleMarker(),
+        ),
+      ];
+    }
+
+    return [];
+  }
+
+  /// Generates stop markers from real stops.
+  List<Marker> get _stopMarkers {
+    if (!_hasRealStops) return [];
+
+    return stops.map((stop) => Marker(
+      point: stop.position,
+      width: 32,
+      height: 32,
+      child: Tooltip(
+        message: stop.name,
+        child: StopMarkerWidget(
+          name: stop.name,
+          isInferred: stop.isInferred,
+        ),
+      ),
+    )).toList();
+  }
+
+  /// Freshness label for map pill.
+  String get _freshnessLabel {
+    if (lastUpdateAt == null) return '';
+    final diff = DateTime.now().difference(lastUpdateAt!);
+    if (diff.inSeconds < 10) return 'hace ${diff.inSeconds}s';
+    if (diff.inSeconds < 60) return 'hace ${diff.inSeconds}s';
+    if (diff.inMinutes < 5) return 'hace ${diff.inMinutes}min';
+    return 'hace ${diff.inMinutes}min (stale)';
+  }
+
+  /// Build the main pill label based on current state.
+  String _buildMainPillLabel(List<List<LatLng>> segments) {
+    if (!showRoute) return 'Mapa general';
+
+    if (isLiveLocation) {
+      if (_hasRealVehicles) {
+        return 'GPS real · ${vehicles.length} unidades';
+      }
+      return 'GPS real';
+    }
+
+    if (showDemoLabel) return 'Modo demostración';
+
+    if (route.tieneGeometriaReal) {
+      if (_hasRealVehicles) {
+        return '${vehicles.length} unidades · WebSocket';
+      }
+      return 'OSM · ${segments.length} seg. · 1 unidad sim.';
+    }
+
+    return '1 unidad · simulación local';
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -138,8 +241,10 @@ class DemoMap extends StatelessWidget {
                 ),
                 MarkerLayer(
                   markers: [
-                    // ELIMINADO: puntos blancos sintéticos (_simStops)
-                    // Las paradas reales deben venir de StopInfo/backend
+                    // Real stops from backend/GeoJSON
+                    ..._stopMarkers,
+
+                    // User position marker
                     if (user != null)
                       Marker(
                         point: user,
@@ -149,15 +254,9 @@ class DemoMap extends StatelessWidget {
                           accuracy: isLiveLocation ? locationAccuracy : null,
                         ),
                       ),
-                    if (showRoute)
-                      Marker(
-                        point: vehicle,
-                        width: 58,
-                        height: 58,
-                        child: const _VehicleMarker(),
-                      ),
-                    // ELIMINADO: etiqueta fija "Catedral"
-                    // Las etiquetas de lugares deben venir de datos reales
+
+                    // Vehicles: prefer real from WebSocket, fallback to simulated
+                    ..._vehicleMarkers,
                   ],
                 ),
                 RichAttributionWidget(
@@ -172,23 +271,28 @@ class DemoMap extends StatelessWidget {
             top: 16,
             left: 16,
             child: _MapPill(
-              label: !showRoute
-                  ? 'Mapa general'
-                  : isLiveLocation
-                      ? 'GPS real'
-                      : showDemoLabel
-                          ? 'Modo demostración'
-                          : (showRoute && route.tieneGeometriaReal
-                              ? 'OSM · ${segments.length} seg. · 1 unidad sim.'
-                              : '1 unidad · hace 28 s'),
-              dark: showDemoLabel,
+              label: _buildMainPillLabel(segments),
+              dark: showDemoLabel || !_hasRealVehicles,
             ),
           ),
-          if (showDemoLabel)
-            const Positioned(
+          // Show freshness info if enabled
+          if (showFreshnessInfo && lastUpdateAt != null)
+            Positioned(
               top: 16,
               right: 16,
-              child: _MapPill(label: 'Datos simulados'),
+              child: _MapPill(
+                label: _freshnessLabel,
+                dark: false,
+              ),
+            )
+          else if (showDemoLabel || (!_hasRealVehicles && showRoute))
+            Positioned(
+              top: 16,
+              right: 16,
+              child: _MapPill(
+                label: _hasRealVehicles ? 'En vivo' : 'Datos simulados',
+                dark: !_hasRealVehicles,
+              ),
             ),
         ],
       ),
@@ -235,22 +339,74 @@ class _MapPill extends StatelessWidget {
 }
 
 class _VehicleMarker extends StatelessWidget {
-  const _VehicleMarker();
+  const _VehicleMarker({
+    this.speed,
+    this.confidence,
+    this.heading,
+    this.isSimulated = true,
+  });
+
+  final double? speed;
+  final String? confidence;
+  final double? heading;
+  final bool isSimulated;
+
+  Color get _borderColor {
+    if (confidence == 'Alta') return AppColors.greenBright;
+    if (confidence == 'Media') return AppColors.amber;
+    return AppColors.terracotta;
+  }
+
+  bool get _isPaused => speed != null && speed! < 1;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: 52,
-      height: 52,
-      decoration: BoxDecoration(
-        color: AppColors.ink,
-        shape: BoxShape.circle,
-        border: Border.all(color: AppColors.greenBright, width: 5),
-        boxShadow: const [
-          BoxShadow(color: Color(0x33209D65), blurRadius: 0, spreadRadius: 12),
-        ],
-      ),
-      child: const Icon(Icons.directions_bus, color: Colors.white, size: 25),
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Transform.rotate(
+          angle: heading != null ? (heading! * 3.14159 / 180) : 0,
+          child: Container(
+            width: 52,
+            height: 52,
+            decoration: BoxDecoration(
+              color: _isPaused ? AppColors.muted : AppColors.ink,
+              shape: BoxShape.circle,
+              border: Border.all(color: _borderColor, width: 5),
+              boxShadow: [
+                BoxShadow(
+                  color: _borderColor.withValues(alpha: 0.3),
+                  blurRadius: 0,
+                  spreadRadius: 12,
+                ),
+              ],
+            ),
+            child: Icon(
+              _isPaused ? Icons.pause : Icons.directions_bus,
+              color: Colors.white,
+              size: 25,
+            ),
+          ),
+        ),
+        // Speed indicator (only for real vehicles)
+        if (speed != null && !isSimulated)
+          Container(
+            margin: const EdgeInsets.only(top: 2),
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: BoxDecoration(
+              color: AppColors.ink,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Text(
+              '${speed!.round()} km/h',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 10,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+      ],
     );
   }
 }

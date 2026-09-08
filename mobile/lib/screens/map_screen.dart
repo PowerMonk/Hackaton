@@ -798,7 +798,7 @@ class SelectableRouteCard extends StatelessWidget {
   }
 }
 
-class FocusedRouteView extends StatelessWidget {
+class FocusedRouteView extends StatefulWidget {
   const FocusedRouteView({
     required this.route,
     required this.onBack,
@@ -819,21 +819,50 @@ class FocusedRouteView extends StatelessWidget {
   final bool isLiveLocation;
 
   @override
+  State<FocusedRouteView> createState() => _FocusedRouteViewState();
+}
+
+class _FocusedRouteViewState extends State<FocusedRouteView> {
+  List<StopWithCoords> _stops = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadStops();
+  }
+
+  @override
+  void didUpdateWidget(FocusedRouteView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.route.id != widget.route.id) {
+      _loadStops();
+    }
+  }
+
+  Future<void> _loadStops() async {
+    final stops = await StopsWithCoordsExtension.stopsWithCoordsFor(widget.route);
+    if (mounted) {
+      setState(() => _stops = stops);
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     final compact = MediaQuery.sizeOf(context).width < 360;
-    final isReal = route.tieneGeometriaReal;
+    final isReal = widget.route.tieneGeometriaReal;
     final simEta = isReal
-        ? DemoSimulation().etaFor(route.polyline!, 0.4).label
+        ? DemoSimulation().etaFor(widget.route.polyline!, 0.4).label
         : '4-6 min';
     return SizedBox.expand(
       child: Stack(
         children: [
           Positioned.fill(
             child: DemoMap(
-              route: route,
-              userPosition: userPosition,
-              locationAccuracy: locationAccuracy,
-              isLiveLocation: isLiveLocation,
+              route: widget.route,
+              userPosition: widget.userPosition,
+              locationAccuracy: widget.locationAccuracy,
+              isLiveLocation: widget.isLiveLocation,
+              stops: _stops,
             ),
           ),
           Positioned(
@@ -847,12 +876,12 @@ class FocusedRouteView extends StatelessWidget {
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  RouteBadge(route: route, compact: true),
+                  RouteBadge(route: widget.route, compact: true),
                   const SizedBox(width: 9),
                   ConstrainedBox(
                     constraints: const BoxConstraints(maxWidth: 150),
                     child: Text(
-                      isReal ? route.name : '${route.id} · Centro',
+                      isReal ? widget.route.name : '${widget.route.id} · Centro',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
@@ -863,7 +892,7 @@ class FocusedRouteView extends StatelessWidget {
                   ),
                   IconButton(
                     visualDensity: VisualDensity.compact,
-                    onPressed: onBack,
+                    onPressed: widget.onBack,
                     tooltip: 'Elegir otra ruta',
                     icon: const Icon(Icons.close, size: 20),
                   ),
@@ -878,7 +907,7 @@ class FocusedRouteView extends StatelessWidget {
               color: AppColors.ink,
               borderRadius: BorderRadius.circular(18),
               child: InkWell(
-                onTap: onBoarding,
+                onTap: widget.onBoarding,
                 borderRadius: BorderRadius.circular(18),
                 child: Padding(
                   padding: EdgeInsets.symmetric(
@@ -964,11 +993,11 @@ class FocusedRouteView extends StatelessWidget {
                         ),
                       ),
                     const SizedBox(height: 12),
-                    if (route.paradasCount == 0)
+                    if (widget.route.paradasCount == 0)
                       const _StopsUnavailableCard()
                     else
                       FutureBuilder<List<StopInfo>>(
-                        future: RoutesRepository.stopsFor(route),
+                        future: RoutesRepository.stopsFor(widget.route),
                         builder: (context, snapshot) {
                           final stops = snapshot.data ?? const <StopInfo>[];
                           if (stops.isEmpty) {
@@ -984,7 +1013,7 @@ class FocusedRouteView extends StatelessWidget {
                       ),
                     const SizedBox(height: 12),
                     OutlinedButton.icon(
-                      onPressed: onService,
+                      onPressed: widget.onService,
                       icon: const Icon(Icons.wifi_off, size: 18),
                       label: const Text('Estado del servicio'),
                       style: OutlinedButton.styleFrom(
@@ -1377,22 +1406,29 @@ class ActiveTripView extends StatelessWidget {
                   children: [
                     RouteBadge(route: route, large: true),
                     const SizedBox(width: 18),
-                    const Expanded(
+                    Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            'Hacia Centro',
+                            // Use real direction if available, otherwise show "Sentido no disponible"
+                            route.direction ?? 'Sentido no disponible',
                             style: TextStyle(
                               color: Colors.white,
-                              fontSize: 26,
+                              fontSize: route.direction != null ? 26 : 20,
                               fontWeight: FontWeight.w800,
+                              fontStyle: route.direction == null
+                                  ? FontStyle.italic
+                                  : FontStyle.normal,
                             ),
                           ),
-                          SizedBox(height: 7),
+                          const SizedBox(height: 7),
                           Text(
-                            'Próxima: Catedral · 3-5 min',
-                            style: TextStyle(
+                            // ETA is estimated, don't invent stops
+                            route.tieneGeometriaReal
+                                ? 'ETA estimado · ${DemoSimulation().etaFor(route.polyline!, 0.4).label}'
+                                : 'Sin datos de paradas',
+                            style: const TextStyle(
                               color: Colors.white70,
                               fontSize: 18,
                             ),
@@ -1413,19 +1449,21 @@ class ActiveTripView extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 12),
-                const Row(
+                Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text(
-                      'Villalongín',
+                    const Text(
+                      'Inicio',
                       style: TextStyle(color: Colors.white70, fontSize: 16),
                     ),
                     Text(
-                      '3 de 7 paradas',
-                      style: TextStyle(color: Colors.white70, fontSize: 16),
+                      route.paradasCount > 0
+                          ? '${route.paradasCount} paradas · OSM'
+                          : 'Sin paradas registradas',
+                      style: const TextStyle(color: Colors.white70, fontSize: 16),
                     ),
-                    Text(
-                      'Terminal',
+                    const Text(
+                      'Fin',
                       style: TextStyle(color: Colors.white70, fontSize: 16),
                     ),
                   ],
