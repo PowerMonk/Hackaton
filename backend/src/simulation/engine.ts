@@ -22,7 +22,7 @@ import {
 const DEFAULT_CONFIG: SimulationConfig = {
   seed: 42,
   speedMultiplier: 1,
-  vehiclesPerRoute: 2,
+  vehiclesPerRoute: 4, // Increased from 2
   gpsNoiseMeters: 8,
   dropSampleProbability: 0.05,
   trafficPauseProbability: 0.02,
@@ -30,6 +30,17 @@ const DEFAULT_CONFIG: SimulationConfig = {
 };
 
 const LOCATION_SAMPLE_INTERVAL_TICKS = 30;
+
+// Initial positions for vehicles (distributed along route)
+const VEHICLE_INITIAL_POSITIONS = [0.05, 0.30, 0.60, 0.85];
+
+// Pre-calculated segment info for efficient position lookups
+interface SegmentInfo {
+  startProgress: number;
+  endProgress: number;
+  lengthM: number;
+  points: [number, number][];
+}
 
 interface SimulatedVehicle {
   id: string;
@@ -54,6 +65,8 @@ export class SimulationEngine {
   private routes: Map<string, Route> = new Map();
   private routeGeometries: Map<string, [number, number][][]> = new Map();
   private routeLengths: Map<string, number> = new Map();
+  // Pre-computed segment info for each route (avoids flattening errors)
+  private routeSegments: Map<string, SegmentInfo[]> = new Map();
 
   private running = false;
   private tickIntervalMs = 1000;
@@ -77,16 +90,52 @@ export class SimulationEngine {
     this.routes.clear();
     this.routeGeometries.clear();
     this.routeLengths.clear();
+    this.routeSegments.clear();
 
     for (const route of routes) {
       this.routes.set(route.id, route);
       if (route.geometry?.coordinates) {
         this.routeGeometries.set(route.id, route.geometry.coordinates);
-        this.routeLengths.set(route.id, route.totalLengthM || this.calculateLength(route.geometry.coordinates));
+        const totalLength = route.totalLengthM || this.calculateLength(route.geometry.coordinates);
+        this.routeLengths.set(route.id, totalLength);
+
+        // Pre-compute segment info for proper position calculations
+        const segmentInfos = this.computeSegmentInfo(route.geometry.coordinates, totalLength);
+        this.routeSegments.set(route.id, segmentInfos);
       }
     }
 
     console.log(`Simulation: Loaded ${routes.length} routes`);
+  }
+
+  /** Pre-compute segment boundaries and lengths for accurate position tracking */
+  private computeSegmentInfo(coordinates: [number, number][][], totalLength: number): SegmentInfo[] {
+    const segments: SegmentInfo[] = [];
+    let accumulatedLength = 0;
+
+    for (const line of coordinates) {
+      if (line.length < 2) continue;
+
+      let segmentLength = 0;
+      for (let i = 0; i < line.length - 1; i++) {
+        segmentLength += this.haversineDistance(
+          line[i][1], line[i][0],
+          line[i + 1][1], line[i + 1][0]
+        );
+      }
+
+      if (segmentLength > 0) {
+        segments.push({
+          startProgress: accumulatedLength / totalLength,
+          endProgress: (accumulatedLength + segmentLength) / totalLength,
+          lengthM: segmentLength,
+          points: line,
+        });
+        accumulatedLength += segmentLength;
+      }
+    }
+
+    return segments;
   }
 
   /** Calculate total length of MultiLineString in meters */
@@ -109,25 +158,28 @@ export class SimulationEngine {
 
     let vehicleIndex = 0;
     for (const [routeId, route] of this.routes) {
-      const geometry = this.routeGeometries.get(routeId);
-      if (!geometry || geometry.length === 0) continue;
+      const segments = this.routeSegments.get(routeId);
+      if (!segments || segments.length === 0) continue;
 
-      // Create vehicles for this route
-      const numVehicles = Math.min(this.config.vehiclesPerRoute, 3);
+      // Create vehicles for this route (up to 4)
+      const numVehicles = Math.min(this.config.vehiclesPerRoute, VEHICLE_INITIAL_POSITIONS.length);
 
       for (let i = 0; i < numVehicles; i++) {
         const vehicleId = `sim-v${vehicleIndex++}`;
 
-        // Spread vehicles along route
-        const baseProgress = i / numVehicles;
-        const jitter = this.rng.range(-0.05, 0.05);
-        const initialProgress = Math.max(0, Math.min(0.95, baseProgress + jitter));
+        // Use predefined positions with small jitter
+        const baseProgress = VEHICLE_INITIAL_POSITIONS[i];
+        const jitter = this.rng.range(-0.02, 0.02);
+        const initialProgress = Math.max(0.02, Math.min(0.98, baseProgress + jitter));
+
+        // Validate that progress is within a valid segment
+        const validProgress = this.snapToValidSegment(routeId, initialProgress);
 
         // Initial speed: 15-30 km/h (urban Morelia)
         const initialSpeed = this.rng.range(15, 30);
 
-        // Create initial passengers
-        const passengerCount = this.rng.int(1, 4);
+        // Create initial passengers (2-5 per vehicle)
+        const passengerCount = this.rng.int(2, 5);
         const passengers: SimulatedPassenger[] = [];
 
         for (let p = 0; p < passengerCount; p++) {
@@ -135,17 +187,17 @@ export class SimulationEngine {
             id: `${vehicleId}-p${p}`,
             sessionId: `session-${vehicleId}-p${p}`,
             routeId,
-            progress: initialProgress,
+            progress: validProgress,
             speed: initialSpeed,
             boardedAt: new Date(),
-            willExitAtProgress: this.passengerGen.generateExitProgress(initialProgress),
+            willExitAtProgress: this.passengerGen.generateExitProgress(validProgress),
           });
         }
 
         const vehicle: SimulatedVehicle = {
           id: vehicleId,
           routeId,
-          progress: initialProgress,
+          progress: validProgress,
           speed: initialSpeed,
           heading: 0,
           passengers,
@@ -158,7 +210,40 @@ export class SimulationEngine {
       }
     }
 
-    console.log(`Simulation: Initialized ${this.vehicles.size} vehicles`);
+    console.log(`Simulation: Initialized ${this.vehicles.size} vehicles across ${this.routes.size} routes`);
+  }
+
+  /** Snap progress to nearest valid segment (avoid gaps between disconnected segments) */
+  private snapToValidSegment(routeId: string, progress: number): number {
+    const segments = this.routeSegments.get(routeId);
+    if (!segments || segments.length === 0) return progress;
+
+    // Check if progress falls within any segment
+    for (const seg of segments) {
+      if (progress >= seg.startProgress && progress <= seg.endProgress) {
+        return progress; // Already in a valid segment
+      }
+    }
+
+    // Find nearest segment boundary
+    let nearestProgress = progress;
+    let minDistance = Infinity;
+
+    for (const seg of segments) {
+      const distToStart = Math.abs(progress - seg.startProgress);
+      const distToEnd = Math.abs(progress - seg.endProgress);
+
+      if (distToStart < minDistance) {
+        minDistance = distToStart;
+        nearestProgress = seg.startProgress + 0.001; // Slightly inside segment
+      }
+      if (distToEnd < minDistance) {
+        minDistance = distToEnd;
+        nearestProgress = seg.endProgress - 0.001;
+      }
+    }
+
+    return nearestProgress;
   }
 
   /** Set callback for vehicle updates */
@@ -306,16 +391,23 @@ export class SimulationEngine {
   private updateVehicle(vehicle: SimulatedVehicle, deltaMs: number): void {
     const now = Date.now();
 
-    // Check if paused
+    // Check if paused (speed = 0 while paused)
     if (vehicle.isPaused) {
-      if (now < vehicle.pauseEndTime) return;
+      vehicle.speed = 0; // Report actual zero speed when paused
+      if (now < vehicle.pauseEndTime) {
+        vehicle.lastUpdateMs = now;
+        return;
+      }
       vehicle.isPaused = false;
+      vehicle.speed = this.rng.range(12, 25); // Resume with new speed
     }
 
-    // Random traffic pause
+    // Random traffic pause (simulate semáforos, tráfico)
     if (this.traffic.shouldPause(this.config.trafficPauseProbability)) {
       vehicle.isPaused = true;
+      vehicle.speed = 0;
       vehicle.pauseEndTime = now + this.traffic.pauseDuration() * 1000;
+      vehicle.lastUpdateMs = now;
       return;
     }
 
@@ -331,13 +423,33 @@ export class SimulationEngine {
     const distanceM = speedMs * (deltaMs / 1000);
     const progressDelta = distanceM / routeLength;
 
-    vehicle.progress += progressDelta;
+    const newProgress = vehicle.progress + progressDelta;
+
+    // Check if we're crossing into a gap between segments
+    const segments = this.routeSegments.get(vehicle.routeId);
+    if (segments && segments.length > 1) {
+      // Find current and target segments
+      const currentSeg = this.findSegmentForProgress(segments, vehicle.progress);
+      const targetSeg = this.findSegmentForProgress(segments, newProgress);
+
+      if (currentSeg && targetSeg && currentSeg !== targetSeg) {
+        // Jumping to next segment - snap to its start
+        vehicle.progress = targetSeg.startProgress + 0.001;
+      } else {
+        vehicle.progress = newProgress;
+      }
+    } else {
+      vehicle.progress = newProgress;
+    }
 
     // Route completion: loop back
-    if (vehicle.progress >= 1) {
+    if (vehicle.progress >= 0.99) {
       vehicle.progress = 0.02;
       vehicle.speed = this.rng.range(15, 30);
     }
+
+    // Ensure progress stays in valid range
+    vehicle.progress = this.snapToValidSegment(vehicle.routeId, vehicle.progress);
 
     // Update heading
     vehicle.heading = this.calculateHeading(vehicle.routeId, vehicle.progress);
@@ -346,6 +458,16 @@ export class SimulationEngine {
     this.updatePassengers(vehicle);
 
     vehicle.lastUpdateMs = now;
+  }
+
+  /** Find which segment contains a given progress value */
+  private findSegmentForProgress(segments: SegmentInfo[], progress: number): SegmentInfo | null {
+    for (const seg of segments) {
+      if (progress >= seg.startProgress && progress <= seg.endProgress) {
+        return seg;
+      }
+    }
+    return null;
   }
 
   private updatePassengers(vehicle: SimulatedVehicle): void {
@@ -403,49 +525,83 @@ export class SimulationEngine {
   }
 
   private getPositionAtProgress(routeId: string, progress: number): Coordinates | null {
-    const geometry = this.routeGeometries.get(routeId);
-    if (!geometry || geometry.length === 0) return null;
-
-    // Flatten MultiLineString
-    const allPoints: [number, number][] = [];
-    for (const line of geometry) {
-      allPoints.push(...line);
-    }
-
-    if (allPoints.length < 2) return null;
-
-    // Calculate total length and find position
-    let totalLength = 0;
-    const segments: { length: number; startIdx: number }[] = [];
-
-    for (let i = 0; i < allPoints.length - 1; i++) {
-      const len = this.haversineDistance(
-        allPoints[i][1], allPoints[i][0],
-        allPoints[i + 1][1], allPoints[i + 1][0]
-      );
-      segments.push({ length: len, startIdx: i });
-      totalLength += len;
-    }
+    const segments = this.routeSegments.get(routeId);
+    if (!segments || segments.length === 0) return null;
 
     const clampedProgress = Math.max(0, Math.min(1, progress));
-    const targetDistance = totalLength * clampedProgress;
-    let traveled = 0;
 
+    // Find which segment contains this progress
     for (const seg of segments) {
-      if (traveled + seg.length >= targetDistance || seg.startIdx === allPoints.length - 2) {
-        const segProgress = seg.length > 0 ? (targetDistance - traveled) / seg.length : 0;
-        const startPt = allPoints[seg.startIdx];
-        const endPt = allPoints[seg.startIdx + 1];
-
-        return {
-          lon: startPt[0] + (endPt[0] - startPt[0]) * Math.min(1, segProgress),
-          lat: startPt[1] + (endPt[1] - startPt[1]) * Math.min(1, segProgress),
-        };
+      if (clampedProgress >= seg.startProgress && clampedProgress <= seg.endProgress) {
+        // Calculate position within this segment
+        const segmentProgress = (clampedProgress - seg.startProgress) / (seg.endProgress - seg.startProgress);
+        return this.interpolateWithinSegment(seg.points, segmentProgress);
       }
-      traveled += seg.length;
     }
 
-    const lastPt = allPoints[allPoints.length - 1];
+    // Progress is in a gap between segments - find nearest segment
+    let nearestSeg = segments[0];
+    let minDistance = Infinity;
+
+    for (const seg of segments) {
+      const distToStart = Math.abs(clampedProgress - seg.startProgress);
+      const distToEnd = Math.abs(clampedProgress - seg.endProgress);
+
+      if (distToStart < minDistance) {
+        minDistance = distToStart;
+        nearestSeg = seg;
+      }
+      if (distToEnd < minDistance) {
+        minDistance = distToEnd;
+        nearestSeg = seg;
+      }
+    }
+
+    // Return the nearest point of the nearest segment
+    if (clampedProgress < nearestSeg.startProgress) {
+      const pt = nearestSeg.points[0];
+      return { lon: pt[0], lat: pt[1] };
+    } else {
+      const pt = nearestSeg.points[nearestSeg.points.length - 1];
+      return { lon: pt[0], lat: pt[1] };
+    }
+  }
+
+  /** Interpolate position within a single segment's points */
+  private interpolateWithinSegment(points: [number, number][], progress: number): Coordinates | null {
+    if (points.length < 2) {
+      return points.length === 1 ? { lon: points[0][0], lat: points[0][1] } : null;
+    }
+
+    // Calculate total length of this segment
+    let totalLength = 0;
+    for (let i = 0; i < points.length - 1; i++) {
+      totalLength += this.haversineDistance(
+        points[i][1], points[i][0],
+        points[i + 1][1], points[i + 1][0]
+      );
+    }
+
+    const targetDistance = totalLength * Math.max(0, Math.min(1, progress));
+    let traveled = 0;
+
+    for (let i = 0; i < points.length - 1; i++) {
+      const segLen = this.haversineDistance(
+        points[i][1], points[i][0],
+        points[i + 1][1], points[i + 1][0]
+      );
+
+      if (traveled + segLen >= targetDistance || i === points.length - 2) {
+        const t = segLen > 0 ? (targetDistance - traveled) / segLen : 0;
+        return {
+          lon: points[i][0] + (points[i + 1][0] - points[i][0]) * Math.min(1, t),
+          lat: points[i][1] + (points[i + 1][1] - points[i][1]) * Math.min(1, t),
+        };
+      }
+      traveled += segLen;
+    }
+
+    const lastPt = points[points.length - 1];
     return { lon: lastPt[0], lat: lastPt[1] };
   }
 

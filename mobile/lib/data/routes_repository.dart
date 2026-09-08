@@ -58,9 +58,20 @@ class RoutesRepository {
       final nombre = (props['nombre'] ?? props['ref'] ?? 'Ruta $i') as String;
       final stableId = (f['id'] ?? props['ref'] ?? props['nombre'] ?? 'Ruta $i')
           .toString();
+      final ref = props['ref'] as String?;
       final geom = (f['geometry'] as Map).cast<String, dynamic>();
-      final poly = _flattenGeometry(geom);
+
+      // Preservar segmentos separados para MultiLineString
+      final segments = _parseSegments(geom);
+      if (segments.isEmpty) continue;
+
+      // Calcular polyline aplanado para compatibilidad con código legacy
+      final poly = segments.expand((s) => s).toList();
       if (poly.length < 2) continue;
+
+      // displayCode: preferir ref, luego nombre corto
+      final displayCode = ref ?? _shortCode(nombre);
+
       routes.add(
         TransitRoute(
           id: stableId,
@@ -76,14 +87,25 @@ class RoutesRepository {
               ? '${props['variantes']} variantes en OSM'
               : null,
           polyline: poly,
+          segments: segments,
           fuente: 'osm-demo',
           esEstimado: true,
           paradasCount: (props['paradas'] as num?)?.toInt() ?? 0,
+          displayCode: displayCode,
+          direction: null, // Sin GTFS, no inventamos dirección
         ),
       );
     }
     routes.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
     return routes;
+  }
+
+  /// Extrae código corto del nombre (primeras palabras significativas).
+  static String _shortCode(String nombre) {
+    final words = nombre.split(RegExp(r'[\s\-]+'));
+    if (words.length <= 2) return nombre;
+    // Tomar máximo 2 palabras para el código
+    return words.take(2).join(' ');
   }
 
   /// Paradas cercanas a una ruta (≤[maxMeters]), ordenadas por progreso.
@@ -98,14 +120,17 @@ class RoutesRepository {
       final features = (fc['features'] as List).cast<Map<String, dynamic>>();
       const dist = Distance();
       final scored = <_ScoredStop>[];
+      final allPts = route.allPoints;
+      if (allPts.isEmpty) return demoStops;
+
       for (final f in features) {
         final geom = (f['geometry'] as Map).cast<String, dynamic>();
         final coords = (geom['coordinates'] as List).cast<num>();
         final pt = LatLng(coords[1].toDouble(), coords[0].toDouble());
         var best = double.infinity;
         var bestIdx = 0;
-        for (var k = 0; k < route.polyline!.length; k++) {
-          final d = dist(route.polyline![k], pt);
+        for (var k = 0; k < allPts.length; k++) {
+          final d = dist(allPts[k], pt);
           if (d < best) {
             best = d;
             bestIdx = k;
@@ -114,18 +139,30 @@ class RoutesRepository {
         if (best <= maxMeters) {
           final props = (f['properties'] as Map).cast<String, dynamic>();
           final nombre = (props['nombre'] as String?) ?? '(parada sin nombre)';
-          scored.add(_ScoredStop(nombre: nombre, index: bestIdx));
+          scored.add(_ScoredStop(nombre: nombre, index: bestIdx, isInferred: nombre.isEmpty));
         }
       }
       scored.sort((a, b) => a.index.compareTo(b.index));
-      if (scored.isEmpty) return demoStops;
+      if (scored.isEmpty) {
+        // Sin fallback silencioso - retornar lista vacía con mensaje claro
+        return [
+          const StopInfo(
+            name: 'Sin paradas registradas',
+            detail: 'Datos OSM incompletos',
+            eta: '',
+            kind: StopKind.upcoming,
+          ),
+        ];
+      }
       return [
         for (var k = 0; k < scored.length; k++)
           StopInfo(
             name: scored[k].nombre,
             detail: k == 0
                 ? 'Inicio del tramo · OSM'
-                : 'Parada ${k + 1} · estimado',
+                : scored[k].isInferred
+                    ? 'Parada inferida · estimado'
+                    : 'Parada ${k + 1} · OSM',
             eta: k == 0 ? '' : 'Estimado',
             kind: k == 0
                 ? StopKind.current
@@ -143,37 +180,44 @@ class RoutesRepository {
     if (!route.tieneGeometriaReal) return double.infinity;
     const distance = Distance();
     var nearest = double.infinity;
-    for (final point in route.polyline!) {
-      nearest = nearest < distance(position, point)
-          ? nearest
-          : distance(position, point);
+    for (final point in route.allPoints) {
+      final d = distance(position, point);
+      if (d < nearest) nearest = d;
     }
     return nearest;
   }
 
-  static List<LatLng> _flattenGeometry(Map<String, dynamic> geom) {
+  /// Parsea geometría preservando segmentos separados.
+  /// Cada segmento de MultiLineString se mantiene independiente.
+  static List<List<LatLng>> _parseSegments(Map<String, dynamic> geom) {
     final type = geom['type'] as String;
     final coords = geom['coordinates'] as List;
-    final pts = <LatLng>[];
-    void addPt(List c) {
-      pts.add(LatLng((c[1] as num).toDouble(), (c[0] as num).toDouble()));
-    }
+    final segments = <List<LatLng>>[];
 
     if (type == 'LineString') {
+      final pts = <LatLng>[];
       for (final c in coords) {
-        addPt((c as List).cast<dynamic>());
+        final cl = (c as List).cast<num>();
+        pts.add(LatLng(cl[1].toDouble(), cl[0].toDouble()));
       }
+      if (pts.length >= 2) segments.add(pts);
     } else if (type == 'MultiLineString') {
+      // IMPORTANTE: NO unir segmentos - cada uno es independiente
       for (final seg in coords) {
+        final pts = <LatLng>[];
         for (final c in (seg as List)) {
           final cl = (c as List).cast<num>();
-          final pt = LatLng(cl[1].toDouble(), cl[0].toDouble());
-          // Evita duplicados en la unión de segmentos fragmentados.
-          if (pts.isEmpty || pts.last != pt) pts.add(pt);
+          pts.add(LatLng(cl[1].toDouble(), cl[0].toDouble()));
         }
+        if (pts.length >= 2) segments.add(pts);
       }
     }
-    return pts;
+    return segments;
+  }
+
+  /// @deprecated Use [_parseSegments] instead.
+  static List<LatLng> _flattenGeometry(Map<String, dynamic> geom) {
+    return _parseSegments(geom).expand((s) => s).toList();
   }
 
   static String _inferMode(String nombre) {
@@ -199,7 +243,8 @@ class RoutesRepository {
 }
 
 class _ScoredStop {
-  _ScoredStop({required this.nombre, required this.index});
+  _ScoredStop({required this.nombre, required this.index, this.isInferred = false});
   final String nombre;
   final int index;
+  final bool isInferred;
 }

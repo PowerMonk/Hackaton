@@ -13,12 +13,61 @@ class TripStartResult {
   final String? error;
 }
 
+/// Vehicle update received from WebSocket.
+class VehicleUpdate {
+  const VehicleUpdate({
+    required this.id,
+    required this.routeId,
+    required this.progress,
+    required this.speed,
+    required this.heading,
+    required this.passengerCount,
+    required this.confidence,
+    required this.lat,
+    required this.lon,
+    required this.lastUpdateAt,
+    required this.isSimulated,
+  });
+
+  final String id;
+  final String routeId;
+  final double progress;
+  final double speed; // km/h
+  final double heading;
+  final int passengerCount;
+  final String confidence;
+  final double lat;
+  final double lon;
+  final DateTime lastUpdateAt;
+  final bool isSimulated;
+
+  factory VehicleUpdate.fromJson(Map<String, dynamic> json) {
+    final position = json['currentPosition'] as Map<String, dynamic>? ?? {};
+    return VehicleUpdate(
+      id: json['id'] as String? ?? '',
+      routeId: json['routeId'] as String? ?? '',
+      progress: (json['progress'] as num?)?.toDouble() ?? 0,
+      speed: (json['speed'] as num?)?.toDouble() ?? 0,
+      heading: (json['heading'] as num?)?.toDouble() ?? 0,
+      passengerCount: json['passengerCount'] as int? ?? 0,
+      confidence: json['confidence'] as String? ?? 'Baja',
+      lat: (position['lat'] as num?)?.toDouble() ?? 0,
+      lon: (position['lon'] as num?)?.toDouble() ?? 0,
+      lastUpdateAt: DateTime.fromMillisecondsSinceEpoch(
+        json['lastUpdateAt'] as int? ?? 0,
+      ),
+      isSimulated: json['isSimulated'] as bool? ?? true,
+    );
+  }
+}
+
 class TripSessionController {
   TripSessionController({
     required this.api,
     required this.locationSource,
     required this.mode,
     this.onError,
+    this.onVehicleUpdate,
     DateTime Function()? now,
   }) : _now = now ?? DateTime.now;
 
@@ -26,12 +75,21 @@ class TripSessionController {
   final LocationSource locationSource;
   final AppMode mode;
   final void Function(String message)? onError;
+  final void Function(List<VehicleUpdate> vehicles)? onVehicleUpdate;
   final DateTime Function() _now;
 
   StreamSubscription<LocationSample>? _locationSubscription;
   StreamSubscription<Map<String, dynamic>>? _mobilitySubscription;
   String? _sessionId;
   DateTime? _lastSentAt;
+
+  // Expose vehicle stream
+  final _vehicleController = StreamController<List<VehicleUpdate>>.broadcast();
+  Stream<List<VehicleUpdate>> get vehicleStream => _vehicleController.stream;
+
+  // Latest vehicles
+  List<VehicleUpdate> _latestVehicles = [];
+  List<VehicleUpdate> get latestVehicles => _latestVehicles;
 
   Future<TripStartResult> start(String routeId) async {
     await stop();
@@ -57,7 +115,7 @@ class TripSessionController {
       _mobilitySubscription = api
           .watchRoute(routeId)
           .listen(
-            (_) {},
+            _processWebSocketMessage,
             onError: (Object error, StackTrace _) => _report(error),
           );
       return const TripStartResult(mode: TripConnectionMode.live);
@@ -70,11 +128,31 @@ class TripSessionController {
     }
   }
 
+  void _processWebSocketMessage(Map<String, dynamic> message) {
+    final type = message['type'] as String?;
+    if (type == 'vehicle_update') {
+      final payload = message['payload'] as Map<String, dynamic>?;
+      if (payload == null) return;
+
+      final vehiclesJson = payload['vehicles'] as List<dynamic>? ?? [];
+      final vehicles = vehiclesJson
+          .whereType<Map<String, dynamic>>()
+          .map(VehicleUpdate.fromJson)
+          .toList();
+
+      _latestVehicles = vehicles;
+      _vehicleController.add(vehicles);
+      onVehicleUpdate?.call(vehicles);
+    }
+    // Handle other message types as needed
+  }
+
   Future<void> stop() async {
     await _locationSubscription?.cancel();
     await _mobilitySubscription?.cancel();
     _locationSubscription = null;
     _mobilitySubscription = null;
+    _latestVehicles = [];
     await locationSource.stop();
     final sessionId = _sessionId;
     _sessionId = null;
@@ -85,6 +163,10 @@ class TripSessionController {
         _report(error);
       }
     }
+  }
+
+  void dispose() {
+    _vehicleController.close();
   }
 
   Future<void> _sendLocation(LocationSample sample) async {

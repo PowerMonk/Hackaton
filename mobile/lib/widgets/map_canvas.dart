@@ -40,40 +40,44 @@ class DemoMap extends StatelessWidget {
     const LatLng(19.70768, -101.19738),
   ];
 
-  List<LatLng> get _effectivePolyline =>
-      showRoute && route.tieneGeometriaReal ? route.polyline! : _routePoints;
+  /// Retorna los segmentos de la ruta (preservados de MultiLineString).
+  List<List<LatLng>> get _effectiveSegments {
+    if (!showRoute || !route.tieneGeometriaReal) {
+      return [_routePoints];
+    }
+    // Usar segmentos si están disponibles, sino crear uno solo con polyline
+    if (route.segments != null && route.segments!.isNotEmpty) {
+      return route.segments!;
+    }
+    return [route.polyline ?? _routePoints];
+  }
+
+  /// Todos los puntos aplanados (para cálculos de centro, posición, etc.)
+  List<LatLng> get _allPoints => _effectiveSegments.expand((s) => s).toList();
 
   LatLng get _center {
     if (isLiveLocation && userPosition != null) return userPosition!;
-    final pts = _effectivePolyline;
+    final pts = _allPoints;
+    if (pts.isEmpty) return demoUserPosition;
     return pts[pts.length ~/ 2];
   }
 
   LatLng get _simUser {
     if (!showRoute || !route.tieneGeometriaReal) return demoUserPosition;
-    return DemoSimulation().positionAt(_effectivePolyline, 0.35);
+    return DemoSimulation().positionAt(_allPoints, 0.35);
   }
 
   LatLng get _simVehicle {
     if (!showRoute || !route.tieneGeometriaReal) return demoVehiclePosition;
-    return DemoSimulation().positionAt(_effectivePolyline, 0.55);
+    return DemoSimulation().positionAt(_allPoints, 0.55);
   }
 
-  List<LatLng> get _simStops {
-    if (!showRoute || !route.tieneGeometriaReal) {
-      return const [
-        LatLng(19.69644, -101.17756),
-        LatLng(19.69945, -101.18122),
-        LatLng(19.70376, -101.18814),
-      ];
-    }
-    final pts = _effectivePolyline;
-    return [pts.first, pts[pts.length ~/ 2], pts.last];
-  }
+  // ELIMINADO: _simStops con puntos sintéticos
+  // Las paradas reales deben venir del repositorio, no generarse aquí
 
   @override
   Widget build(BuildContext context) {
-    final pts = _effectivePolyline;
+    final segments = _effectiveSegments;
     final user = isLiveLocation ? userPosition : _simUser;
     final vehicle = _simVehicle;
     return SizedBox(
@@ -119,20 +123,23 @@ class DemoMap extends StatelessWidget {
                         color: AppColors.teal.withValues(alpha: 0.35),
                         strokeWidth: 7,
                       ),
+                    // Dibujar cada segmento como polyline separado
+                    // NO conectar segmentos entre sí
                     if (showRoute)
-                      Polyline(
-                        points: pts,
-                        color: route.color,
-                        strokeWidth: 9,
-                        borderColor: Colors.white,
-                        borderStrokeWidth: 3,
-                      ),
+                      for (final segment in segments)
+                        Polyline(
+                          points: segment,
+                          color: route.color,
+                          strokeWidth: 9,
+                          borderColor: Colors.white,
+                          borderStrokeWidth: 3,
+                        ),
                   ],
                 ),
                 MarkerLayer(
                   markers: [
-                    if (showRoute)
-                      for (final s in _simStops) _stopMarker(s),
+                    // ELIMINADO: puntos blancos sintéticos (_simStops)
+                    // Las paradas reales deben venir de StopInfo/backend
                     if (user != null)
                       Marker(
                         point: user,
@@ -149,12 +156,8 @@ class DemoMap extends StatelessWidget {
                         height: 58,
                         child: const _VehicleMarker(),
                       ),
-                    const Marker(
-                      point: LatLng(19.7059, -101.1929),
-                      width: 138,
-                      height: 44,
-                      child: _PlaceLabel(),
-                    ),
+                    // ELIMINADO: etiqueta fija "Catedral"
+                    // Las etiquetas de lugares deben venir de datos reales
                   ],
                 ),
                 RichAttributionWidget(
@@ -169,15 +172,15 @@ class DemoMap extends StatelessWidget {
             top: 16,
             left: 16,
             child: _MapPill(
-                   label: !showRoute
-                       ? 'Mapa general'
-                       : isLiveLocation
-                       ? 'GPS real'
-                       : showDemoLabel
-                  ? 'Modo demostración'
-                  : (showRoute && route.tieneGeometriaReal
-                        ? 'OSM · 1 unidad sim.'
-                        : '1 unidad · hace 28 s'),
+              label: !showRoute
+                  ? 'Mapa general'
+                  : isLiveLocation
+                      ? 'GPS real'
+                      : showDemoLabel
+                          ? 'Modo demostración'
+                          : (showRoute && route.tieneGeometriaReal
+                              ? 'OSM · ${segments.length} seg. · 1 unidad sim.'
+                              : '1 unidad · hace 28 s'),
               dark: showDemoLabel,
             ),
           ),
@@ -192,19 +195,15 @@ class DemoMap extends StatelessWidget {
     );
   }
 
-  static Marker _stopMarker(LatLng point) => Marker(
-    point: point,
-    width: 28,
-    height: 28,
-    child: Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        shape: BoxShape.circle,
-        border: Border.all(color: const Color(0xFFC94C28), width: 4),
-        boxShadow: const [BoxShadow(color: Color(0x22000000), blurRadius: 8)],
-      ),
-    ),
-  );
+  /// Crea un marcador para una parada real.
+  /// Use esto cuando tenga coordenadas de paradas desde el backend/GeoJSON.
+  static Marker createStopMarker(LatLng point, {bool isInferred = false}) =>
+      Marker(
+        point: point,
+        width: 28,
+        height: 28,
+        child: StopMarkerWidget(isInferred: isInferred),
+      );
 }
 
 class _MapPill extends StatelessWidget {
@@ -281,33 +280,24 @@ class _UserMarker extends StatelessWidget {
   }
 }
 
-class _PlaceLabel extends StatelessWidget {
-  const _PlaceLabel();
+/// Marcador para paradas reales (cuando se integren desde backend/GeoJSON).
+class StopMarkerWidget extends StatelessWidget {
+  const StopMarkerWidget({this.name, this.isInferred = false, super.key});
+
+  final String? name;
+  final bool isInferred;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 10),
       decoration: BoxDecoration(
-        color: AppColors.ink,
-        borderRadius: BorderRadius.circular(22),
-      ),
-      child: FittedBox(
-        fit: BoxFit.scaleDown,
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.location_city, color: Colors.white, size: 17),
-            const SizedBox(width: 7),
-            const Text(
-              'Catedral',
-              style: TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ],
+        color: Colors.white,
+        shape: BoxShape.circle,
+        border: Border.all(
+          color: isInferred ? Colors.grey : const Color(0xFFC94C28),
+          width: 4,
         ),
+        boxShadow: const [BoxShadow(color: Color(0x22000000), blurRadius: 8)],
       ),
     );
   }

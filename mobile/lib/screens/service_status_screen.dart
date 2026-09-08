@@ -1,13 +1,59 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 
+import '../data/health_repository.dart';
 import '../theme/app_theme.dart';
 import '../widgets/ui_components.dart';
 
-class ServiceStatusScreen extends StatelessWidget {
+/// Pantalla de estado del servicio.
+///
+/// Se muestra automáticamente cuando hay degradación del servicio.
+/// Consulta /health automáticamente y muestra estado real.
+class ServiceStatusScreen extends StatefulWidget {
   const ServiceStatusScreen({super.key});
 
   @override
+  State<ServiceStatusScreen> createState() => _ServiceStatusScreenState();
+}
+
+class _ServiceStatusScreenState extends State<ServiceStatusScreen> {
+  late final StreamSubscription<HealthStatus> _subscription;
+  HealthStatus? _status;
+  bool _isRetrying = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _status = healthRepository.lastStatus;
+    _subscription = healthRepository.statusStream.listen((status) {
+      if (mounted) {
+        setState(() {
+          _status = status;
+          _isRetrying = false;
+        });
+      }
+    });
+    // Check immediately if no status
+    if (_status == null) {
+      healthRepository.checkHealth();
+    }
+  }
+
+  @override
+  void dispose() {
+    _subscription.cancel();
+    super.dispose();
+  }
+
+  Future<void> _retry() async {
+    setState(() => _isRetrying = true);
+    await healthRepository.checkHealth();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final status = _status;
+
     return Scaffold(
       appBar: AppBar(
         title: const Text(
@@ -18,9 +64,9 @@ class ServiceStatusScreen extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.only(right: 18),
             child: StatusPill(
-              label: 'Modo demostración',
-              color: Colors.white,
-              background: AppColors.ink,
+              label: _getModeLabel(status),
+              color: _getModeTextColor(status),
+              background: _getModeBgColor(status),
             ),
           ),
         ],
@@ -29,266 +75,268 @@ class ServiceStatusScreen extends StatelessWidget {
         padding: const EdgeInsets.fromLTRB(22, 12, 22, 30),
         child: Column(
           children: [
-            SoftCard(
-              color: AppColors.ink,
-              borderColor: AppColors.ink,
-              child: Row(
-                children: [
-                  Container(
-                    width: 68,
-                    height: 68,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF384250),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: const Icon(
-                      Icons.wifi_off,
-                      color: Colors.white,
-                      size: 34,
+            // Connection status card
+            _buildConnectionCard(status),
+            const SizedBox(height: 16),
+
+            // Stats row
+            if (status != null && status.isConnected)
+              _buildStatsRow(status),
+
+            // Show degradation warnings
+            if (status != null && status.isDegraded && status.isConnected)
+              _buildDegradedWarning(status),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildConnectionCard(HealthStatus? status) {
+    final isConnected = status?.isConnected ?? false;
+    final isHealthy = status?.isHealthy ?? false;
+
+    return SoftCard(
+      color: isConnected && isHealthy ? const Color(0xFFE1F4E8) : AppColors.ink,
+      borderColor: isConnected && isHealthy ? const Color(0xFF9ED5B6) : AppColors.ink,
+      child: Row(
+        children: [
+          Container(
+            width: 68,
+            height: 68,
+            decoration: BoxDecoration(
+              color: isConnected && isHealthy
+                  ? AppColors.green.withValues(alpha: 0.2)
+                  : const Color(0xFF384250),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Icon(
+              isConnected && isHealthy ? Icons.wifi : Icons.wifi_off,
+              color: isConnected && isHealthy ? AppColors.green : Colors.white,
+              size: 34,
+            ),
+          ),
+          const SizedBox(width: 18),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  isConnected
+                      ? (isHealthy ? 'Conectado' : 'Servicio degradado')
+                      : 'Sin conexión',
+                  style: TextStyle(
+                    color: isConnected && isHealthy ? AppColors.green : Colors.white,
+                    fontSize: 22,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 7),
+                Text(
+                  isConnected
+                      ? (isHealthy
+                          ? 'Datos en tiempo real disponibles.'
+                          : status?.errorMessage ?? 'El servicio tiene problemas.')
+                      : status?.errorMessage ?? 'Mostramos datos demo guardados.',
+                  style: TextStyle(
+                    color: isConnected && isHealthy
+                        ? AppColors.muted
+                        : Colors.white70,
+                    fontSize: 17,
+                    height: 1.4,
+                  ),
+                ),
+                if (status != null) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    'Último chequeo: ${_formatTime(status.lastCheckedAt)}',
+                    style: TextStyle(
+                      color: isConnected && isHealthy
+                          ? AppColors.muted
+                          : Colors.white54,
+                      fontSize: 14,
                     ),
                   ),
-                  const SizedBox(width: 18),
-                  const Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Sin conexión',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 22,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                        SizedBox(height: 7),
-                        Text(
-                          'Mostramos horarios base guardados. Los tiempos en vivo volverán solos.',
-                          style: TextStyle(
-                            color: Colors.white70,
-                            fontSize: 17,
-                            height: 1.4,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  TextButton(
-                    onPressed: () {},
-                    style: TextButton.styleFrom(
-                      backgroundColor: AppColors.cream,
-                      foregroundColor: AppColors.ink,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 17,
-                        vertical: 15,
-                      ),
-                    ),
-                    child: const Text(
+                ],
+              ],
+            ),
+          ),
+          if (!isConnected || !isHealthy)
+            TextButton(
+              onPressed: _isRetrying ? null : _retry,
+              style: TextButton.styleFrom(
+                backgroundColor: AppColors.cream,
+                foregroundColor: AppColors.ink,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 17,
+                  vertical: 15,
+                ),
+              ),
+              child: _isRetrying
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Text(
                       'Reintentar',
                       style: TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w700,
                       ),
                     ),
-                  ),
-                ],
-              ),
             ),
-            const SizedBox(height: 16),
-            Row(
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStatsRow(HealthStatus status) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Row(
+        children: [
+          Expanded(
+            child: _StatCard(
+              icon: Icons.directions_bus,
+              value: '${status.vehicleCount}',
+              label: 'Vehículos',
+            ),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: _StatCard(
+              icon: Icons.route,
+              value: '${status.routeCount}',
+              label: 'Rutas',
+            ),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: _StatCard(
+              icon: Icons.speed,
+              value: status.mode.toUpperCase(),
+              label: 'Modo',
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDegradedWarning(HealthStatus status) {
+    return SoftCard(
+      borderColor: AppColors.amber,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.warning_amber, color: AppColors.amber, size: 30),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Expanded(
-                  child: _StatusTile(
-                    icon: Icons.visibility_off_outlined,
-                    title: 'Sin rutas cercanas',
-                    text: 'Camina a Av. Madero · 300 m con servicio.',
-                    action: 'Ver mapa amplio',
+                const Text(
+                  'Servicio en modo degradado',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w800,
                   ),
                 ),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: _StatusTile(
-                    icon: Icons.my_location,
-                    title: 'Activa tu ubicación',
-                    text: 'La usamos solo para ETAs y tu viaje.',
-                    action: 'Permitir',
+                const SizedBox(height: 7),
+                Text(
+                  status.errorMessage ?? 'Algunos datos pueden estar desactualizados.',
+                  style: const TextStyle(
+                    color: AppColors.muted,
+                    fontSize: 16,
+                    height: 1.35,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                const Text(
+                  'Reintentando automáticamente...',
+                  style: TextStyle(
+                    color: AppColors.amber,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 16),
-            SoftCard(
-              borderColor: AppColors.amber,
-              child: const Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Icon(Icons.hourglass_top, size: 30),
-                  SizedBox(width: 14),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'ETA desactualizado · R12',
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                        SizedBox(height: 7),
-                        Text(
-                          'Sin datos desde hace 3 min. Rango 8-14 min. No salgas corriendo.',
-                          style: TextStyle(
-                            color: AppColors.muted,
-                            fontSize: 16,
-                            height: 1.35,
-                          ),
-                        ),
-                        SizedBox(height: 10),
-                        Text(
-                          'Reintentando cada 30 s...',
-                          style: TextStyle(
-                            color: AppColors.amber,
-                            fontSize: 16,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
-            SoftCard(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Row(
-                    children: [
-                      Icon(Icons.sync, size: 28),
-                      SizedBox(width: 12),
-                      Text(
-                        'Cargando datos de la ruta...',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 18),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
-                    child: const LinearProgressIndicator(
-                      value: 0.46,
-                      minHeight: 12,
-                      color: AppColors.terracotta,
-                      backgroundColor: AppColors.creamDark,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
-            SoftCard(
-              color: const Color(0xFFE1F4E8),
-              borderColor: const Color(0xFF9ED5B6),
-              child: const Row(
-                children: [
-                  Icon(Icons.directions_bus, color: AppColors.green, size: 35),
-                  SizedBox(width: 15),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Viaje activo · conexión intermitente',
-                          style: TextStyle(
-                            fontSize: 18,
-                            color: AppColors.green,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                        SizedBox(height: 6),
-                        Text(
-                          'Guardamos tus puntos y los enviamos al reconectar. Sigue a bordo.',
-                          style: TextStyle(fontSize: 16, height: 1.35),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Text(
-                    'hace 1 min',
-                    style: TextStyle(
-                      color: AppColors.green,
-                      fontSize: 15,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
+
+  String _getModeLabel(HealthStatus? status) {
+    if (status == null) return 'Verificando...';
+    if (!status.isConnected) return 'Offline';
+    if (status.isDemoMode) return 'Modo demo';
+    if (status.isLiveMode) return 'En vivo';
+    return 'Degradado';
+  }
+
+  Color _getModeTextColor(HealthStatus? status) {
+    if (status == null) return AppColors.muted;
+    if (!status.isConnected) return Colors.white;
+    if (status.isDemoMode) return Colors.white;
+    if (status.isLiveMode) return AppColors.green;
+    return AppColors.amber;
+  }
+
+  Color _getModeBgColor(HealthStatus? status) {
+    if (status == null) return AppColors.creamDark;
+    if (!status.isConnected) return AppColors.ink;
+    if (status.isDemoMode) return AppColors.ink;
+    if (status.isLiveMode) return const Color(0xFFE1F4E8);
+    return AppColors.amber.withValues(alpha: 0.2);
+  }
+
+  String _formatTime(DateTime time) {
+    final now = DateTime.now();
+    final diff = now.difference(time);
+    if (diff.inSeconds < 60) return 'hace ${diff.inSeconds}s';
+    if (diff.inMinutes < 60) return 'hace ${diff.inMinutes}min';
+    return 'hace ${diff.inHours}h';
+  }
 }
 
-class _StatusTile extends StatelessWidget {
-  const _StatusTile({
+class _StatCard extends StatelessWidget {
+  const _StatCard({
     required this.icon,
-    required this.title,
-    required this.text,
-    required this.action,
+    required this.value,
+    required this.label,
   });
 
   final IconData icon;
-  final String title;
-  final String text;
-  final String action;
+  final String value;
+  final String label;
 
   @override
-  Widget build(BuildContext context) => SoftCard(
-    child: Column(
-      children: [
-        Container(
-          width: 58,
-          height: 58,
-          decoration: BoxDecoration(
-            color: AppColors.creamDark,
-            borderRadius: BorderRadius.circular(20),
+  Widget build(BuildContext context) {
+    return SoftCard(
+      child: Column(
+        children: [
+          Icon(icon, size: 28, color: AppColors.ink),
+          const SizedBox(height: 8),
+          Text(
+            value,
+            style: const TextStyle(
+              fontSize: 24,
+              fontWeight: FontWeight.w800,
+            ),
           ),
-          child: Icon(icon, size: 30),
-        ),
-        const SizedBox(height: 17),
-        Text(
-          title,
-          textAlign: TextAlign.center,
-          style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w800),
-        ),
-        const SizedBox(height: 9),
-        Text(
-          text,
-          textAlign: TextAlign.center,
-          style: const TextStyle(
-            color: AppColors.muted,
-            fontSize: 15,
-            height: 1.35,
+          const SizedBox(height: 4),
+          Text(
+            label,
+            style: const TextStyle(
+              color: AppColors.muted,
+              fontSize: 14,
+            ),
           ),
-        ),
-        const SizedBox(height: 12),
-        Text(
-          action,
-          textAlign: TextAlign.center,
-          style: const TextStyle(
-            color: AppColors.terracotta,
-            fontSize: 16,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-      ],
-    ),
-  );
+        ],
+      ),
+    );
+  }
 }

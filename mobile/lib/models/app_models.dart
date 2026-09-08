@@ -14,9 +14,12 @@ class TransitRoute {
     required this.status,
     this.sharedSegment,
     this.polyline,
+    this.segments,
     this.fuente = 'mock',
     this.esEstimado = true,
     this.paradasCount = 0,
+    this.displayCode,
+    this.direction,
   });
 
   final String id;
@@ -28,8 +31,13 @@ class TransitRoute {
   final RouteStatus status;
   final String? sharedSegment;
 
-  /// Geometría real (GeoJSON OSM, fuente local). Null = mock antiguo.
+  /// @deprecated Use [segments] instead. Flattened polyline for legacy code.
   final List<LatLng>? polyline;
+
+  /// Segmentos separados de la geometría MultiLineString.
+  /// Cada segmento es una lista de puntos que NO deben conectarse
+  /// artificialmente con otros segmentos.
+  final List<List<LatLng>>? segments;
 
   /// 'mock' | 'osm-demo' | 'api' — para etiquetar Estimado/Simulado.
   final String fuente;
@@ -40,16 +48,38 @@ class TransitRoute {
   /// Nº de paradas asociadas (proximidad o GTFS futuro).
   final int paradasCount;
 
-  bool get tieneGeometriaReal => polyline != null && polyline!.length >= 2;
+  /// Código visible para badges (ej: "R2", "Azul A"). Distinto del id técnico.
+  final String? displayCode;
+
+  /// Dirección/sentido de la ruta. Null = "Sentido no disponible".
+  final String? direction;
+
+  bool get tieneGeometriaReal =>
+      (segments != null && segments!.isNotEmpty) ||
+      (polyline != null && polyline!.length >= 2);
+
+  /// Retorna todos los puntos de todos los segmentos (para cálculos de distancia).
+  List<LatLng> get allPoints {
+    if (segments != null && segments!.isNotEmpty) {
+      return segments!.expand((s) => s).toList();
+    }
+    return polyline ?? [];
+  }
+
+  /// Número total de puntos en la geometría.
+  int get totalPoints => allPoints.length;
 
   TransitRoute copyWith({
     String? frequency,
     String? eta,
     RouteStatus? status,
     List<LatLng>? polyline,
+    List<List<LatLng>>? segments,
     String? fuente,
     bool? esEstimado,
     int? paradasCount,
+    String? displayCode,
+    String? direction,
   }) {
     return TransitRoute(
       id: id,
@@ -61,9 +91,12 @@ class TransitRoute {
       status: status ?? this.status,
       sharedSegment: sharedSegment,
       polyline: polyline ?? this.polyline,
+      segments: segments ?? this.segments,
       fuente: fuente ?? this.fuente,
       esEstimado: esEstimado ?? this.esEstimado,
       paradasCount: paradasCount ?? this.paradasCount,
+      displayCode: displayCode ?? this.displayCode,
+      direction: direction ?? this.direction,
     );
   }
 }

@@ -15,23 +15,52 @@ class RouteBadge extends StatelessWidget {
   final bool large;
   final bool compact;
 
+  /// Returns the display text: prefer displayCode, then short name, then id.
+  String get _displayText {
+    // Use displayCode if available (e.g., "R2", "Azul A")
+    if (route.displayCode != null && route.displayCode!.isNotEmpty) {
+      return route.displayCode!;
+    }
+    // Fallback to name if it's short enough
+    if (route.name.length <= 12) {
+      return route.name;
+    }
+    // Otherwise use id
+    return route.id;
+  }
+
   @override
   Widget build(BuildContext context) {
+    final text = _displayText;
+    // Adjust font size based on text length
+    final baseFontSize = large ? 40.0 : (compact ? 19.0 : 26.0);
+    final fontSize = text.length > 8
+        ? baseFontSize * 0.7
+        : text.length > 5
+            ? baseFontSize * 0.85
+            : baseFontSize;
+
     return Container(
       width: large ? 118 : (compact ? 70 : 114),
       height: large ? 82 : (compact ? 48 : 64),
       alignment: Alignment.center,
+      padding: const EdgeInsets.symmetric(horizontal: 4),
       decoration: BoxDecoration(
         color: large ? AppColors.cream : route.color,
         borderRadius: BorderRadius.circular(compact ? 16 : 22),
       ),
-      child: Text(
-        route.id,
-        style: TextStyle(
-          color: large ? AppColors.green : Colors.white,
-          fontSize: large ? 40 : (compact ? 19 : 26),
-          fontWeight: FontWeight.w800,
-          letterSpacing: -1,
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        child: Text(
+          text,
+          textAlign: TextAlign.center,
+          maxLines: 1,
+          style: TextStyle(
+            color: large ? AppColors.green : Colors.white,
+            fontSize: fontSize,
+            fontWeight: FontWeight.w800,
+            letterSpacing: -1,
+          ),
         ),
       ),
     );
