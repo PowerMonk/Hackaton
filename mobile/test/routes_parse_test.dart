@@ -4,9 +4,7 @@ import 'package:morelia_conecta/data/routes_repository.dart';
 
 void main() {
   test('parsea dataset OSM completo de Morelia', () {
-    final raw = File(
-      'assets/geojson/rutas_morelia.geojson',
-    ).readAsStringSync();
+    final raw = File('assets/geojson/rutas_morelia.geojson').readAsStringSync();
     final routes = RoutesRepository.parseRoutesJson(raw);
     expect(routes.length, 124);
     expect(routes.every((r) => r.tieneGeometriaReal), isTrue);

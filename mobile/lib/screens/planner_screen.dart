@@ -21,6 +21,36 @@ class _PlannerScreenState extends State<PlannerScreen> {
 
   var preference = 'Más rápido';
   var selectedMode = 'Transporte';
+  String? activeField;
+  AddressSuggestion? selectedOrigin;
+  AddressSuggestion? selectedDestination;
+
+  static const addressSuggestions = <AddressSuggestion>[
+    AddressSuggestion(
+      label: 'Catedral de Morelia',
+      detail: 'Centro Histórico',
+      lat: 19.7029,
+      lon: -101.1921,
+    ),
+    AddressSuggestion(
+      label: 'Hospital Ángeles Altozano',
+      detail: 'Altozano',
+      lat: 19.6734,
+      lon: -101.1432,
+    ),
+    AddressSuggestion(
+      label: 'Acueducto de Morelia',
+      detail: 'Calzada Fray Antonio de San Miguel',
+      lat: 19.6968,
+      lon: -101.1744,
+    ),
+    AddressSuggestion(
+      label: 'Villas del Pedregal',
+      detail: 'Poniente de Morelia',
+      lat: 19.6748,
+      lon: -101.3264,
+    ),
+  ];
 
   @override
   void dispose() {
@@ -58,7 +88,7 @@ class _PlannerScreenState extends State<PlannerScreen> {
               Text(
                 '¿A dónde vamos?',
                 style: TextStyle(
-                  fontSize: compact ? 32 : 38,
+                  fontSize: compact ? 27 : 30,
                   fontWeight: FontWeight.w800,
                   letterSpacing: -1.5,
                 ),
@@ -73,14 +103,40 @@ class _PlannerScreenState extends State<PlannerScreen> {
                       color: AppColors.teal,
                       title: 'Origen',
                       icon: Icons.gps_fixed,
+                      onTap: () => setState(() => activeField = 'origin'),
+                      onChanged: (value) =>
+                          setState(() => activeField = 'origin'),
                     ),
+                    if (activeField == 'origin')
+                      _SuggestionList(
+                        query: originController.text,
+                        suggestions: addressSuggestions,
+                        onSelected: (suggestion) {
+                          originController.text = suggestion.label;
+                          selectedOrigin = suggestion;
+                          setState(() => activeField = null);
+                        },
+                      ),
                     const Divider(height: 24),
                     _PlaceField(
                       controller: destinationController,
                       color: AppColors.terracotta,
                       title: 'Destino',
                       icon: Icons.swap_vert,
+                      onTap: () => setState(() => activeField = 'destination'),
+                      onChanged: (value) =>
+                          setState(() => activeField = 'destination'),
                     ),
+                    if (activeField == 'destination')
+                      _SuggestionList(
+                        query: destinationController.text,
+                        suggestions: addressSuggestions,
+                        onSelected: (suggestion) {
+                          destinationController.text = suggestion.label;
+                          selectedDestination = suggestion;
+                          setState(() => activeField = null);
+                        },
+                      ),
                   ],
                 ),
               ),
@@ -194,12 +250,16 @@ class _PlaceField extends StatelessWidget {
     required this.color,
     required this.title,
     required this.icon,
+    required this.onTap,
+    required this.onChanged,
   });
 
   final TextEditingController controller;
   final Color color;
   final String title;
   final IconData icon;
+  final VoidCallback onTap;
+  final ValueChanged<String> onChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -215,6 +275,8 @@ class _PlaceField extends StatelessWidget {
         Expanded(
           child: TextField(
             controller: controller,
+            onTap: onTap,
+            onChanged: onChanged,
             textInputAction: TextInputAction.next,
             decoration: InputDecoration(
               labelText: title,
@@ -228,6 +290,72 @@ class _PlaceField extends StatelessWidget {
         ),
         Icon(icon, size: 27),
       ],
+    );
+  }
+}
+
+class AddressSuggestion {
+  const AddressSuggestion({
+    required this.label,
+    required this.detail,
+    required this.lat,
+    required this.lon,
+  });
+
+  final String label;
+  final String detail;
+  final double lat;
+  final double lon;
+}
+
+class _SuggestionList extends StatelessWidget {
+  const _SuggestionList({
+    required this.query,
+    required this.suggestions,
+    required this.onSelected,
+  });
+
+  final String query;
+  final List<AddressSuggestion> suggestions;
+  final ValueChanged<AddressSuggestion> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final normalized = query.trim().toLowerCase();
+    final visible = normalized.isEmpty
+        ? suggestions
+        : suggestions
+              .where(
+                (suggestion) =>
+                    suggestion.label.toLowerCase().contains(normalized) ||
+                    suggestion.detail.toLowerCase().contains(normalized),
+              )
+              .toList();
+    if (visible.isEmpty) return const SizedBox.shrink();
+    return Container(
+      margin: const EdgeInsets.only(top: 6),
+      decoration: BoxDecoration(
+        color: AppColors.creamDark,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        children: [
+          for (final suggestion in visible)
+            ListTile(
+              dense: true,
+              leading: const Icon(Icons.location_on_outlined, size: 21),
+              title: Text(
+                suggestion.label,
+                style: const TextStyle(
+                  fontWeight: FontWeight.w700,
+                  fontSize: 14,
+                ),
+              ),
+              subtitle: Text(suggestion.detail),
+              onTap: () => onSelected(suggestion),
+            ),
+        ],
+      ),
     );
   }
 }

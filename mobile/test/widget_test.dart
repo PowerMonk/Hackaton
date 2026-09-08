@@ -9,7 +9,7 @@ void main() {
     await tester.pumpWidget(const MoreliaConectaApp());
 
     expect(find.text('Elige tu ruta'), findsOneWidget);
-    expect(find.text('Ver en el mapa'), findsOneWidget);
+    expect(find.byTooltip('Ver en el mapa'), findsOneWidget);
     expect(find.text('R12'), findsOneWidget);
     expect(find.text('Home'), findsOneWidget);
     expect(find.text('Cerca de mí'), findsOneWidget);
@@ -25,7 +25,7 @@ void main() {
     await tester.tap(routeCard);
     await tester.pump();
 
-    final viewMapButton = find.text('Ver en el mapa');
+    final viewMapButton = find.byTooltip('Ver en el mapa');
     await tester.drag(find.byType(Scrollable).first, const Offset(0, -700));
     await tester.pump();
     expect(viewMapButton, findsOneWidget);
@@ -33,7 +33,25 @@ void main() {
     await tester.pump();
 
     expect(find.text('Paradas en secuencia'), findsOneWidget);
-    expect(find.text('Unidad a 350 m de ti'), findsOneWidget);
+    expect(find.textContaining('Llegada estimada'), findsOneWidget);
+  });
+
+  testWidgets('map button opens a general map without route selection', (
+    tester,
+  ) async {
+    await tester.pumpWidget(const MoreliaConectaApp());
+
+    await tester.tap(find.byTooltip('Ver en el mapa'));
+    await tester.pump();
+
+    expect(find.text('Mapa de Morelia'), findsOneWidget);
+    expect(
+      find.text(
+        'Selecciona una ruta para ver su recorrido y las unidades disponibles.',
+      ),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('can open planner tab', (tester) async {
@@ -79,7 +97,7 @@ void main() {
     await tester.tap(find.byType(SelectableRouteCard).first);
     await tester.pump();
 
-    expect(find.text('Ver en el mapa'), findsOneWidget);
+    expect(find.byTooltip('Ver en el mapa'), findsOneWidget);
     expect(find.text('Cerca de mí'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
@@ -99,9 +117,9 @@ void main() {
     await tester.pump();
     await tester.drag(find.byType(Scrollable).first, const Offset(0, -700));
     await tester.pump();
-    await tester.tap(find.text('Ver en el mapa'));
+    await tester.tap(find.byTooltip('Ver en el mapa'));
     await tester.pump();
-    await tester.tap(find.textContaining('Unidad'));
+    await tester.tap(find.textContaining('Llegada estimada'));
     await tester.pumpAndSettle();
 
     expect(find.text('¿Ya subiste al transporte?'), findsOneWidget);
@@ -121,9 +139,9 @@ void main() {
     await tester.pump();
     await tester.drag(find.byType(Scrollable).first, const Offset(0, -700));
     await tester.pump();
-    await tester.tap(find.text('Ver en el mapa'));
+    await tester.tap(find.byTooltip('Ver en el mapa'));
     await tester.pump();
-    await tester.tap(find.textContaining('Unidad'));
+    await tester.tap(find.textContaining('Llegada estimada'));
     await tester.pumpAndSettle();
     await tester.ensureVisible(find.text('Sí, ya estoy a bordo'));
     await tester.pumpAndSettle();

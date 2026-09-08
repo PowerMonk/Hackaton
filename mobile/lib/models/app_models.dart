@@ -40,8 +40,7 @@ class TransitRoute {
   /// Nº de paradas asociadas (proximidad o GTFS futuro).
   final int paradasCount;
 
-  bool get tieneGeometriaReal =>
-      polyline != null && polyline!.length >= 2;
+  bool get tieneGeometriaReal => polyline != null && polyline!.length >= 2;
 
   TransitRoute copyWith({
     String? frequency,

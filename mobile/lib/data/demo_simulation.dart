@@ -30,7 +30,9 @@ class DemoSimulation {
         // Ruido determinista pequeño (±8m) para no parecer línea perfecta.
         final jitter = _jitter(i);
         return LatLng(
-          poly[i].latitude + (poly[i + 1].latitude - poly[i].latitude) * t + jitter.$1,
+          poly[i].latitude +
+              (poly[i + 1].latitude - poly[i].latitude) * t +
+              jitter.$1,
           poly[i].longitude +
               (poly[i + 1].longitude - poly[i].longitude) * t +
               jitter.$2,

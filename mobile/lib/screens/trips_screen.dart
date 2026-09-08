@@ -1,168 +1,235 @@
 import 'package:flutter/material.dart';
 
 import '../data/demo_data.dart';
+import '../data/routes_repository.dart';
+import '../models/app_models.dart';
 import '../theme/app_theme.dart';
 import '../widgets/map_canvas.dart';
 import '../widgets/ui_components.dart';
 
-class TripsScreen extends StatelessWidget {
-  const TripsScreen({
-    required this.onOpenActiveTrip,
-    required this.onOpenService,
-    super.key,
-  });
+class TripsScreen extends StatefulWidget {
+  const TripsScreen({required this.onOpenActiveTrip, super.key});
 
   final VoidCallback onOpenActiveTrip;
-  final VoidCallback onOpenService;
+
+  @override
+  State<TripsScreen> createState() => _TripsScreenState();
+}
+
+class _TripsScreenState extends State<TripsScreen> {
+  List<TransitRoute> routes = demoRoutes;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadRoutes();
+  }
+
+  Future<void> _loadRoutes() async {
+    final loaded = await RoutesRepository.loadDemoRoutes();
+    if (mounted) setState(() => routes = loaded);
+  }
+
+  TransitRoute get currentRoute => routes.firstWhere(
+    (route) => route.tieneGeometriaReal,
+    orElse: () => routes.first,
+  );
 
   @override
   Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      child: Column(
-        children: [
-          Stack(
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxWidth < 390;
+        final route = currentRoute;
+        return SingleChildScrollView(
+          child: Column(
             children: [
-              DemoMap(
-                route: demoRoutes.first,
-                showDemoLabel: true,
-                height: 280,
-              ),
-              Positioned(
-                bottom: 18,
-                left: 22,
-                right: 22,
-                child: SoftCard(
-                  color: AppColors.cream,
-                  child: Row(
-                    children: [
-                      const Icon(Icons.science_outlined, size: 24),
-                      const SizedBox(width: 12),
-                      const Expanded(
-                        child: Text(
-                          'Simulación de 3 unidades en R12 para probar el flujo sin salir a la calle.',
-                          style: TextStyle(fontSize: 15, height: 1.3),
+              DemoMap(route: route, height: compact ? 220 : 280),
+              Padding(
+                padding: EdgeInsets.fromLTRB(
+                  compact ? 16 : 22,
+                  compact ? 20 : 26,
+                  compact ? 16 : 22,
+                  26,
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          'Mis viajes',
+                          style: TextStyle(
+                            fontSize: compact ? 27 : 31,
+                            fontWeight: FontWeight.w800,
+                          ),
                         ),
+                        const StatusPill(
+                          label: '1 activo',
+                          color: AppColors.green,
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 14),
+                    _ActiveTripCard(
+                      route: route,
+                      compact: compact,
+                      onOpen: widget.onOpenActiveTrip,
+                    ),
+                    const SizedBox(height: 10),
+                    _TripHistoryCard(
+                      route: routes.isNotEmpty
+                          ? routes.first
+                          : demoRoutes.first,
+                      title: 'Villalongín → Catedral',
+                      detail: 'Hoy · 8:12',
+                      contribution: 'Aportaste 14 min · Gracias',
+                      compact: compact,
+                    ),
+                    const SizedBox(height: 10),
+                    _TripHistoryCard(
+                      route: routes.length > 1 ? routes[1] : demoRoutes[1],
+                      title: 'Catedral → Villas',
+                      detail: 'Ayer · 18:40',
+                      contribution: 'Viaje observado · sin aporte',
+                      compact: compact,
+                    ),
+                    const SizedBox(height: 10),
+                    _TripHistoryCard(
+                      route: routes.length > 2 ? routes[2] : demoRoutes[2],
+                      title: 'Lomas → Independencia',
+                      detail: 'Lun · 9:05',
+                      contribution: 'Aportaste 9 min · Gracias',
+                      compact: compact,
+                    ),
+                    const SizedBox(height: 14),
+                    SoftCard(
+                      color: AppColors.creamDark,
+                      borderColor: AppColors.creamDark,
+                      padding: EdgeInsets.all(compact ? 14 : 18),
+                      child: const Row(
+                        children: [
+                          Icon(Icons.eco_outlined, size: 27),
+                          SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              'Esta semana ayudaste a 212 personas con ETAs más precisos.',
+                              style: TextStyle(fontSize: 14, height: 1.35),
+                            ),
+                          ),
+                        ],
                       ),
-                      TextButton(
-                        onPressed: onOpenService,
-                        child: const Text('Salir'),
-                      ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
               ),
             ],
           ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(22, 26, 22, 30),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text(
-                      'Mis viajes',
-                      style: TextStyle(
-                        fontSize: 31,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                    const StatusPill(label: '1 activo', color: AppColors.green),
-                  ],
-                ),
-                const SizedBox(height: 18),
-                InkWell(
-                  onTap: onOpenActiveTrip,
-                  borderRadius: BorderRadius.circular(24),
-                  child: SoftCard(
-                    color: AppColors.green,
-                    borderColor: AppColors.green,
-                    child: Row(
-                      children: [
-                        RouteBadge(route: demoRoutes.first, large: true),
-                        const SizedBox(width: 15),
-                        const Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'R12 · Hacia Centro · en curso',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 17,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                              SizedBox(height: 5),
-                              Text(
-                                'Próxima: Catedral · 3-5 min',
-                                style: TextStyle(
-                                  color: Colors.white70,
-                                  fontSize: 15,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        OutlinedButton(
-                          onPressed: onOpenActiveTrip,
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: AppColors.green,
-                            backgroundColor: AppColors.cream,
-                            side: BorderSide.none,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(14),
-                            ),
-                          ),
-                          child: const Text('Volver'),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 14),
-                const _TripHistoryCard(
-                  routeIndex: 0,
-                  title: 'Villalongín → Catedral',
-                  detail: 'Hoy · 8:12',
-                  contribution: 'Aportaste 14 min de datos · Gracias',
-                ),
-                const SizedBox(height: 14),
-                const _TripHistoryCard(
-                  routeIndex: 1,
-                  title: 'Catedral → Villas',
-                  detail: 'Ayer · 18:40',
-                  contribution: 'Viaje observado · sin aporte',
-                ),
-                const SizedBox(height: 14),
-                const _TripHistoryCard(
-                  routeIndex: 2,
-                  title: 'Lomas → Independencia',
-                  detail: 'Lun · 9:05',
-                  contribution: 'Aportaste 9 min de datos · Gracias',
-                ),
-                const SizedBox(height: 18),
-                SoftCard(
-                  color: AppColors.creamDark,
-                  borderColor: AppColors.creamDark,
-                  child: const Row(
-                    children: [
-                      Icon(Icons.eco_outlined, size: 32),
-                      SizedBox(width: 14),
-                      Expanded(
-                        child: Text(
-                          'Impacto colectivo: esta semana ayudaste a 212 personas con ETAs más precisos.',
-                          style: TextStyle(fontSize: 17, height: 1.4),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
+        );
+      },
+    );
+  }
+}
+
+class _ActiveTripCard extends StatelessWidget {
+  const _ActiveTripCard({
+    required this.route,
+    required this.compact,
+    required this.onOpen,
+  });
+
+  final TransitRoute route;
+  final bool compact;
+  final VoidCallback onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    final details = Expanded(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '${route.id} · viaje en curso',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: compact ? 15 : 17,
+              fontWeight: FontWeight.w700,
             ),
           ),
+          const SizedBox(height: 4),
+          const Text(
+            'Próxima: Catedral · 3-5 min',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(color: Colors.white70, fontSize: 13),
+          ),
         ],
+      ),
+    );
+
+    return InkWell(
+      onTap: onOpen,
+      borderRadius: BorderRadius.circular(20),
+      child: SoftCard(
+        color: AppColors.green,
+        borderColor: AppColors.green,
+        padding: EdgeInsets.all(compact ? 13 : 16),
+        child: compact
+            ? Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      RouteBadge(route: route, compact: true),
+                      const SizedBox(width: 12),
+                      details,
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: OutlinedButton(
+                      onPressed: onOpen,
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: AppColors.green,
+                        backgroundColor: AppColors.cream,
+                        side: BorderSide.none,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 9,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(13),
+                        ),
+                      ),
+                      child: const Text('Volver'),
+                    ),
+                  ),
+                ],
+              )
+            : Row(
+                children: [
+                  RouteBadge(route: route, compact: true),
+                  const SizedBox(width: 14),
+                  details,
+                  const SizedBox(width: 10),
+                  OutlinedButton(
+                    onPressed: onOpen,
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppColors.green,
+                      backgroundColor: AppColors.cream,
+                      side: BorderSide.none,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(13),
+                      ),
+                    ),
+                    child: const Text('Volver'),
+                  ),
+                ],
+              ),
       ),
     );
   }
@@ -170,48 +237,61 @@ class TripsScreen extends StatelessWidget {
 
 class _TripHistoryCard extends StatelessWidget {
   const _TripHistoryCard({
-    required this.routeIndex,
+    required this.route,
     required this.title,
     required this.detail,
     required this.contribution,
+    required this.compact,
   });
 
-  final int routeIndex;
+  final TransitRoute route;
   final String title;
   final String detail;
   final String contribution;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) => SoftCard(
+    padding: EdgeInsets.all(compact ? 12 : 16),
     child: Row(
       children: [
-        RouteBadge(route: demoRoutes[routeIndex]),
-        const SizedBox(width: 16),
+        RouteBadge(route: route, compact: true),
+        SizedBox(width: compact ? 11 : 14),
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
                 title,
-                style: const TextStyle(
-                  fontSize: 18,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: compact ? 15 : 17,
                   fontWeight: FontWeight.w700,
                 ),
               ),
-              const SizedBox(height: 5),
+              const SizedBox(height: 3),
               Text(
                 detail,
-                style: const TextStyle(color: AppColors.muted, fontSize: 15),
+                style: TextStyle(
+                  color: AppColors.muted,
+                  fontSize: compact ? 12 : 14,
+                ),
               ),
-              const SizedBox(height: 7),
+              const SizedBox(height: 4),
               Text(
                 contribution,
-                style: const TextStyle(color: AppColors.green, fontSize: 15),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: AppColors.green,
+                  fontSize: compact ? 12 : 14,
+                ),
               ),
             ],
           ),
         ),
-        const Icon(Icons.chevron_right, size: 28),
+        const Icon(Icons.chevron_right, size: 24),
       ],
     ),
   );

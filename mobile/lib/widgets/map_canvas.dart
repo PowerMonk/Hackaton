@@ -10,12 +10,14 @@ class DemoMap extends StatelessWidget {
   const DemoMap({
     required this.route,
     this.showDemoLabel = false,
+    this.showRoute = true,
     this.height = 400,
     super.key,
   });
 
   final TransitRoute route;
   final bool showDemoLabel;
+  final bool showRoute;
   final double height;
 
   static const userPosition = LatLng(19.70234, -101.18492);
@@ -33,7 +35,7 @@ class DemoMap extends StatelessWidget {
   ];
 
   List<LatLng> get _effectivePolyline =>
-      route.tieneGeometriaReal ? route.polyline! : _routePoints;
+      showRoute && route.tieneGeometriaReal ? route.polyline! : _routePoints;
 
   LatLng get _center {
     final pts = _effectivePolyline;
@@ -41,17 +43,17 @@ class DemoMap extends StatelessWidget {
   }
 
   LatLng get _simUser {
-    if (!route.tieneGeometriaReal) return userPosition;
+    if (!showRoute || !route.tieneGeometriaReal) return userPosition;
     return DemoSimulation().positionAt(_effectivePolyline, 0.35);
   }
 
   LatLng get _simVehicle {
-    if (!route.tieneGeometriaReal) return vehiclePosition;
+    if (!showRoute || !route.tieneGeometriaReal) return vehiclePosition;
     return DemoSimulation().positionAt(_effectivePolyline, 0.55);
   }
 
   List<LatLng> get _simStops {
-    if (!route.tieneGeometriaReal) {
+    if (!showRoute || !route.tieneGeometriaReal) {
       return const [
         LatLng(19.69644, -101.17756),
         LatLng(19.69945, -101.18122),
@@ -99,7 +101,7 @@ class DemoMap extends StatelessWidget {
                   ),
                 PolylineLayer(
                   polylines: [
-                    if (!route.tieneGeometriaReal)
+                    if (showRoute && !route.tieneGeometriaReal)
                       Polyline(
                         points: const [
                           LatLng(19.6955, -101.1955),
@@ -110,30 +112,33 @@ class DemoMap extends StatelessWidget {
                         color: AppColors.teal.withValues(alpha: 0.35),
                         strokeWidth: 7,
                       ),
-                    Polyline(
-                      points: pts,
-                      color: route.color,
-                      strokeWidth: 9,
-                      borderColor: Colors.white,
-                      borderStrokeWidth: 3,
-                    ),
+                    if (showRoute)
+                      Polyline(
+                        points: pts,
+                        color: route.color,
+                        strokeWidth: 9,
+                        borderColor: Colors.white,
+                        borderStrokeWidth: 3,
+                      ),
                   ],
                 ),
                 MarkerLayer(
                   markers: [
-                    for (final s in _simStops) _stopMarker(s),
+                    if (showRoute)
+                      for (final s in _simStops) _stopMarker(s),
                     Marker(
                       point: user,
                       width: 46,
                       height: 46,
                       child: const _UserMarker(),
                     ),
-                    Marker(
-                      point: vehicle,
-                      width: 58,
-                      height: 58,
-                      child: const _VehicleMarker(),
-                    ),
+                    if (showRoute)
+                      Marker(
+                        point: vehicle,
+                        width: 58,
+                        height: 58,
+                        child: const _VehicleMarker(),
+                      ),
                     const Marker(
                       point: LatLng(19.7059, -101.1929),
                       width: 138,
@@ -154,9 +159,11 @@ class DemoMap extends StatelessWidget {
             top: 16,
             left: 16,
             child: _MapPill(
-              label: showDemoLabel
+              label: !showRoute
+                  ? 'Mapa general'
+                  : showDemoLabel
                   ? 'Modo demostración'
-                  : (route.tieneGeometriaReal
+                  : (showRoute && route.tieneGeometriaReal
                         ? 'OSM · 1 unidad sim.'
                         : '1 unidad · hace 28 s'),
               dark: showDemoLabel,
