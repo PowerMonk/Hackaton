@@ -3,8 +3,8 @@
 // Handles route data queries from PostGIS
 // ============================================================================
 
-import { db } from "../db/connection";
-import type { Route, RouteWithVehicles, Stop, StopWithEta } from "../types";
+import { sql } from "../db/connection";
+import type { Route, RouteWithVehicles, Stop } from "../types";
 import { getSimulation } from "../simulation/engine";
 
 // Color palette matching Flutter app
@@ -22,11 +22,11 @@ function inferMode(name: string): "Combi" | "Micro" | "Camión" | "Bus" {
   if (lower.includes("combi")) return "Combi";
   if (lower.includes("micro")) return "Micro";
   if (lower.includes("camión") || lower.includes("camion")) return "Camión";
-  return "Combi"; // Default for Morelia
+  return "Combi";
 }
 
 export async function getAllRoutes(): Promise<Route[]> {
-  const result = await db.query`
+  const result = await sql`
     SELECT
       id, ref, name, mode::text, color, osm_id, variantes,
       paradas_count, sin_nombre, fuente::text,
@@ -37,17 +37,17 @@ export async function getAllRoutes(): Promise<Route[]> {
     ORDER BY name
   `;
 
-  return result.map((row: any) => ({
+  return result.map((row) => ({
     id: row.id,
     ref: row.ref,
     name: row.name,
-    mode: row.mode,
+    mode: row.mode as Route["mode"],
     color: row.color,
     osmId: row.osm_id,
     variantes: row.variantes,
     paradasCount: row.paradas_count,
     sinNombre: row.sin_nombre,
-    fuente: row.fuente,
+    fuente: row.fuente as Route["fuente"],
     geometry: row.geometry,
     totalLengthM: row.total_length_m,
     createdAt: row.created_at,
@@ -55,7 +55,7 @@ export async function getAllRoutes(): Promise<Route[]> {
 }
 
 export async function getRouteById(routeId: string): Promise<Route | null> {
-  const result = await db.query`
+  const result = await sql`
     SELECT
       id, ref, name, mode::text, color, osm_id, variantes,
       paradas_count, sin_nombre, fuente::text,
@@ -74,13 +74,13 @@ export async function getRouteById(routeId: string): Promise<Route | null> {
     id: row.id,
     ref: row.ref,
     name: row.name,
-    mode: row.mode,
+    mode: row.mode as Route["mode"],
     color: row.color,
     osmId: row.osm_id,
     variantes: row.variantes,
     paradasCount: row.paradas_count,
     sinNombre: row.sin_nombre,
-    fuente: row.fuente,
+    fuente: row.fuente as Route["fuente"],
     geometry: row.geometry,
     totalLengthM: row.total_length_m,
     createdAt: row.created_at,
@@ -108,48 +108,8 @@ export async function getRouteWithVehicles(
   };
 }
 
-export async function getRoutesNearPoint(
-  lat: number,
-  lon: number,
-  radiusMeters: number = 500
-): Promise<Route[]> {
-  const result = await db.query`
-    SELECT
-      id, ref, name, mode::text, color, osm_id, variantes,
-      paradas_count, sin_nombre, fuente::text,
-      ST_AsGeoJSON(geometry)::json as geometry,
-      total_length_m,
-      created_at,
-      ST_Distance(geometry::geography, ST_SetSRID(ST_MakePoint(${lon}, ${lat}), 4326)::geography) as distance
-    FROM routes
-    WHERE ST_DWithin(
-      geometry::geography,
-      ST_SetSRID(ST_MakePoint(${lon}, ${lat}), 4326)::geography,
-      ${radiusMeters}
-    )
-    ORDER BY distance
-    LIMIT 20
-  `;
-
-  return result.map((row: any) => ({
-    id: row.id,
-    ref: row.ref,
-    name: row.name,
-    mode: row.mode,
-    color: row.color,
-    osmId: row.osm_id,
-    variantes: row.variantes,
-    paradasCount: row.paradas_count,
-    sinNombre: row.sin_nombre,
-    fuente: row.fuente,
-    geometry: row.geometry,
-    totalLengthM: row.total_length_m,
-    createdAt: row.created_at,
-  }));
-}
-
 export async function getAllStops(): Promise<Stop[]> {
-  const result = await db.query`
+  const result = await sql`
     SELECT
       s.id,
       s.name,
@@ -166,7 +126,7 @@ export async function getAllStops(): Promise<Stop[]> {
     ORDER BY s.name NULLS LAST
   `;
 
-  return result.map((row: any) => ({
+  return result.map((row) => ({
     id: row.id,
     name: row.name,
     coordinates: { lat: row.lat, lon: row.lon },
@@ -176,7 +136,7 @@ export async function getAllStops(): Promise<Stop[]> {
 }
 
 export async function getStopById(stopId: string): Promise<Stop | null> {
-  const result = await db.query`
+  const result = await sql`
     SELECT
       s.id,
       s.name,
@@ -211,7 +171,7 @@ export async function getStopsNearPoint(
   lon: number,
   radiusMeters: number = 300
 ): Promise<Stop[]> {
-  const result = await db.query`
+  const result = await sql`
     SELECT
       s.id,
       s.name,
@@ -235,7 +195,7 @@ export async function getStopsNearPoint(
     LIMIT 10
   `;
 
-  return result.map((row: any) => ({
+  return result.map((row) => ({
     id: row.id,
     name: row.name,
     coordinates: { lat: row.lat, lon: row.lon },
@@ -244,83 +204,150 @@ export async function getStopsNearPoint(
   }));
 }
 
-// Import routes from GeoJSON (used by seed script)
+// ============================================================================
+// Import Functions (idempotent)
+// ============================================================================
+
 export async function importRoutesFromGeoJSON(
-  geojson: any,
+  geojson: { features: any[] },
   colorIndex: number = 0
 ): Promise<number> {
   let imported = 0;
 
   for (const feature of geojson.features) {
     const props = feature.properties || {};
-    const id = feature.id || props.ref || props.nombre || `route-${imported}`;
 
-    // Build MultiLineString if needed
-    let geometryJson: string;
-    if (feature.geometry.type === "LineString") {
-      geometryJson = JSON.stringify({
-        type: "MultiLineString",
-        coordinates: [feature.geometry.coordinates],
-      });
-    } else {
-      geometryJson = JSON.stringify(feature.geometry);
+    // Use stable ID: feature.id > ref > nombre > osmid
+    const stableId =
+      feature.id?.toString() ||
+      props.ref ||
+      props.nombre ||
+      (props.osmid ? `osm-${props.osmid}` : null);
+
+    if (!stableId) {
+      console.warn("Skipping route without stable ID");
+      continue;
     }
 
-    const mode = inferMode(props.nombre || id);
+    // Normalize to MultiLineString
+    let geometry: { type: string; coordinates: number[][][] };
+    if (feature.geometry.type === "LineString") {
+      geometry = {
+        type: "MultiLineString",
+        coordinates: [feature.geometry.coordinates],
+      };
+    } else if (feature.geometry.type === "MultiLineString") {
+      geometry = feature.geometry;
+    } else {
+      console.warn(`Skipping unsupported geometry type: ${feature.geometry.type}`);
+      continue;
+    }
+
+    const geometryJson = JSON.stringify(geometry);
+    const mode = inferMode(props.nombre || stableId);
     const color = ROUTE_COLORS[(colorIndex + imported) % ROUTE_COLORS.length];
+    const name = props.nombre || props.ref || stableId;
 
-    await db.query`
-      INSERT INTO routes (
-        id, ref, name, mode, color, osm_id, variantes,
-        paradas_count, sin_nombre, fuente, geometry, total_length_m
-      ) VALUES (
-        ${id},
-        ${props.ref || id},
-        ${props.nombre || props.ref || id},
-        ${mode}::transport_mode,
-        ${color},
-        ${props.osmid || null},
-        ${props.variantes || 1},
-        ${props.paradas || 0},
-        ${props.sin_nombre || false},
-        'osm-demo'::data_source,
-        ST_SetSRID(ST_GeomFromGeoJSON(${geometryJson}), 4326),
-        ST_Length(ST_SetSRID(ST_GeomFromGeoJSON(${geometryJson}), 4326)::geography)
-      )
-      ON CONFLICT (id) DO UPDATE SET
-        name = EXCLUDED.name,
-        geometry = EXCLUDED.geometry,
-        total_length_m = EXCLUDED.total_length_m,
-        updated_at = NOW()
-    `;
-
-    imported++;
+    try {
+      await sql`
+        INSERT INTO routes (
+          id, ref, name, mode, color, osm_id, variantes,
+          paradas_count, sin_nombre, fuente, geometry, total_length_m
+        ) VALUES (
+          ${stableId},
+          ${props.ref || stableId},
+          ${name},
+          ${mode}::transport_mode,
+          ${color},
+          ${props.osmid || null},
+          ${props.variantes || 1},
+          ${props.paradas || 0},
+          ${props.sin_nombre || !props.nombre},
+          'osm-demo'::data_source,
+          ST_SetSRID(ST_GeomFromGeoJSON(${geometryJson}), 4326),
+          ST_Length(ST_SetSRID(ST_GeomFromGeoJSON(${geometryJson}), 4326)::geography)
+        )
+        ON CONFLICT (id) DO UPDATE SET
+          name = EXCLUDED.name,
+          geometry = EXCLUDED.geometry,
+          total_length_m = EXCLUDED.total_length_m,
+          updated_at = NOW()
+      `;
+      imported++;
+    } catch (error) {
+      console.error(`Failed to import route ${stableId}:`, error);
+    }
   }
 
   return imported;
 }
 
-// Import stops from GeoJSON
-export async function importStopsFromGeoJSON(geojson: any): Promise<number> {
+export async function importStopsFromGeoJSON(
+  geojson: { features: any[] }
+): Promise<number> {
   let imported = 0;
 
   for (const feature of geojson.features) {
-    if (feature.geometry.type !== "Point") continue;
+    if (feature.geometry?.type !== "Point") continue;
 
     const props = feature.properties || {};
     const [lon, lat] = feature.geometry.coordinates;
 
-    await db.query`
-      INSERT INTO stops (name, location)
-      VALUES (
-        ${props.nombre || null},
-        ST_SetSRID(ST_MakePoint(${lon}, ${lat}), 4326)
-      )
-      ON CONFLICT DO NOTHING
-    `;
+    // Create deterministic ID from coordinates
+    const stableId = `stop-${lat.toFixed(6)}-${lon.toFixed(6)}`.replace(/\./g, "_");
 
-    imported++;
+    try {
+      await sql`
+        INSERT INTO stops (id, name, location)
+        VALUES (
+          ${stableId},
+          ${props.nombre || null},
+          ST_SetSRID(ST_MakePoint(${lon}, ${lat}), 4326)
+        )
+        ON CONFLICT (id) DO UPDATE SET
+          name = COALESCE(EXCLUDED.name, stops.name)
+      `;
+      imported++;
+    } catch (error) {
+      console.error(`Failed to import stop:`, error);
+    }
   }
 
   return imported;
+}
+
+export async function linkStopsToRoutes(): Promise<number> {
+  const result = await sql`
+    INSERT INTO route_stops (route_id, stop_id, route_progress)
+    SELECT DISTINCT ON (r.id, s.id)
+      r.id as route_id,
+      s.id as stop_id,
+      calculate_route_progress(r.geometry, s.location) as route_progress
+    FROM routes r
+    CROSS JOIN stops s
+    WHERE ST_DWithin(r.geometry::geography, s.location::geography, 100)
+    ON CONFLICT (route_id, stop_id) DO UPDATE SET
+      route_progress = EXCLUDED.route_progress
+    RETURNING route_id
+  `;
+
+  // Update paradas_count
+  await sql`
+    UPDATE routes r
+    SET paradas_count = (
+      SELECT COUNT(*) FROM route_stops rs WHERE rs.route_id = r.id
+    )
+  `;
+
+  return result.length;
+}
+
+export async function getRouteCount(): Promise<number> {
+  const [result] = await sql`SELECT COUNT(*) as count FROM routes`;
+  return Number(result?.count || 0);
+}
+
+export async function getStopCount(): Promise<number> {
+  const [result] = await sql`SELECT COUNT(*) as count FROM stops`;
+  return Number(result?.count || 0);
 }

@@ -1,6 +1,5 @@
--- Enable PostGIS extension
-CREATE EXTENSION IF NOT EXISTS postgis;
-CREATE EXTENSION IF NOT EXISTS postgis_topology;
+-- Extensions for Morelia Conecta
+-- This runs on database creation
 
--- Enable UUID generation
+CREATE EXTENSION IF NOT EXISTS postgis;
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";

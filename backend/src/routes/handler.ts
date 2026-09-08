@@ -24,6 +24,14 @@ import { planRoute } from "../services/routing";
 import { getSimulation } from "../simulation/engine";
 import type { LocationSample, RoutePlanRequest } from "../types";
 
+interface ServerState {
+  dbConnected: boolean;
+  schemaReady: boolean;
+  routeCount: number;
+  stopCount: number;
+  simulationRunning: boolean;
+}
+
 // CORS headers for Flutter app
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -51,7 +59,10 @@ function error(message: string, status: number = 400): Response {
 // Main Request Handler
 // ============================================================================
 
-export async function handleRequest(req: Request): Promise<Response> {
+export async function handleRequest(
+  req: Request,
+  serverState: ServerState
+): Promise<Response> {
   const url = new URL(req.url);
   const path = url.pathname;
   const method = req.method;
@@ -62,13 +73,24 @@ export async function handleRequest(req: Request): Promise<Response> {
   }
 
   try {
+    // ========================================================================
     // Health check
+    // ========================================================================
     if (path === "/health" && method === "GET") {
       return json({
-        status: "healthy",
+        status: serverState.dbConnected && serverState.schemaReady ? "healthy" : "degraded",
         mode: process.env.MOBILITY_MODE || "demo",
+        database: {
+          connected: serverState.dbConnected,
+          schemaReady: serverState.schemaReady,
+          routes: serverState.routeCount,
+          stops: serverState.stopCount,
+        },
+        simulation: {
+          running: serverState.simulationRunning,
+        },
         timestamp: new Date().toISOString(),
-        version: "0.1.0",
+        version: "0.2.0",
       });
     }
 
@@ -77,25 +99,45 @@ export async function handleRequest(req: Request): Promise<Response> {
     // ========================================================================
 
     if (path === "/routes" && method === "GET") {
+      if (!serverState.dbConnected) {
+        // Return simulation-only routes
+        const simulation = getSimulation();
+        const vehicles = simulation.getVirtualVehicles();
+        const routeIds = [...new Set(vehicles.map((v) => v.routeId))];
+        return json({
+          routes: routeIds.map((id) => ({ id, name: id, mode: "Combi" })),
+          count: routeIds.length,
+          source: "simulation",
+        });
+      }
+
       const routes = await getAllRoutes();
-      return json({ routes, count: routes.length });
+      return json({ routes, count: routes.length, source: "database" });
     }
 
     if (path.match(/^\/routes\/[^/]+$/) && method === "GET") {
-      const routeId = path.split("/")[2];
+      const routeId = decodeURIComponent(path.split("/")[2]);
+
+      if (!serverState.dbConnected) {
+        return json({ id: routeId, name: routeId, source: "simulation" });
+      }
+
       const route = await getRouteById(routeId);
       if (!route) return error("Route not found", 404);
       return json(route);
     }
 
     if (path.match(/^\/routes\/[^/]+\/vehicles$/) && method === "GET") {
-      const routeId = path.split("/")[2];
-      const routeWithVehicles = await getRouteWithVehicles(routeId);
-      if (!routeWithVehicles) return error("Route not found", 404);
+      const routeId = decodeURIComponent(path.split("/")[2]);
+
+      const simulation = getSimulation();
+      const vehicles = simulation.getRouteVehicles(routeId);
+
       return json({
         routeId,
-        vehicles: routeWithVehicles.vehicles,
-        activePassengers: routeWithVehicles.activePassengers,
+        vehicles,
+        count: vehicles.length,
+        activePassengers: vehicles.reduce((sum, v) => sum + v.passengerCount, 0),
       });
     }
 
@@ -104,22 +146,46 @@ export async function handleRequest(req: Request): Promise<Response> {
     // ========================================================================
 
     if (path === "/stops" && method === "GET") {
+      if (!serverState.dbConnected) {
+        return json({ stops: [], count: 0, source: "unavailable" });
+      }
+
       const stops = await getAllStops();
       return json({ stops, count: stops.length });
     }
 
     if (path.match(/^\/stops\/[^/]+$/) && method === "GET") {
-      const stopId = path.split("/")[2];
+      const stopId = decodeURIComponent(path.split("/")[2]);
+
+      if (!serverState.dbConnected) {
+        return error("Database not available", 503);
+      }
+
       const stop = await getStopById(stopId);
       if (!stop) return error("Stop not found", 404);
       return json(stop);
     }
 
     if (path.match(/^\/stops\/[^/]+\/eta$/) && method === "GET") {
-      const stopId = path.split("/")[2];
+      const stopId = decodeURIComponent(path.split("/")[2]);
       const routeId = url.searchParams.get("routeId") || undefined;
+
+      if (!serverState.dbConnected) {
+        // Return simulation-based ETA
+        return json({
+          stopId,
+          eta: {
+            minMinutes: 5,
+            maxMinutes: 10,
+            label: "5-10 min",
+            confidence: "Baja",
+            stale: true,
+          },
+          source: "simulation",
+        });
+      }
+
       const eta = await calculateStopEta(stopId, routeId);
-      if (!eta) return json({ eta: null, message: "No ETA available" });
       return json({ stopId, eta });
     }
 
@@ -128,11 +194,23 @@ export async function handleRequest(req: Request): Promise<Response> {
     // ========================================================================
 
     if (path === "/boarding-sessions" && method === "POST") {
-      const body = await req.json();
-      const { routeId, deviceId } = body;
+      const body = await req.json() as Record<string, unknown>;
+      const routeId = body.routeId as string | undefined;
+      const deviceId = body.deviceId as string | undefined;
 
       if (!routeId || !deviceId) {
-        return error("routeId and deviceId are required");
+        return error("routeId and deviceId are required", 422);
+      }
+
+      if (!serverState.dbConnected) {
+        // Return mock session
+        return json({
+          id: `sim-session-${Date.now()}`,
+          routeId,
+          deviceId,
+          startedAt: new Date().toISOString(),
+          isSimulated: true,
+        }, 201);
       }
 
       const session = await createBoardingSession(
@@ -145,13 +223,22 @@ export async function handleRequest(req: Request): Promise<Response> {
     }
 
     if (path.match(/^\/boarding-sessions\/[^/]+$/) && method === "DELETE") {
-      const sessionId = path.split("/")[2];
+      const sessionId = decodeURIComponent(path.split("/")[2]);
+
+      if (!serverState.dbConnected) {
+        return json({ success: true, sessionId });
+      }
+
       const ended = await endSession(sessionId);
       if (!ended) return error("Session not found or already ended", 404);
       return json({ success: true, sessionId });
     }
 
     if (path === "/boarding-sessions" && method === "GET") {
+      if (!serverState.dbConnected) {
+        return json({ sessions: [], count: 0 });
+      }
+
       const routeId = url.searchParams.get("routeId") || undefined;
       const sessions = await getActiveSessions(routeId);
       return json({ sessions, count: sessions.length });
@@ -162,20 +249,25 @@ export async function handleRequest(req: Request): Promise<Response> {
     // ========================================================================
 
     if (path === "/locations" && method === "POST") {
-      const body = await req.json();
+      const body = await req.json() as Record<string, unknown>;
+
       const sample: LocationSample = {
-        sessionId: body.sessionId,
-        timestamp: body.timestamp || Date.now(),
-        lat: body.lat,
-        lon: body.lon,
-        accuracy: body.accuracy || 10,
-        speed: body.speed,
-        heading: body.heading,
-        isSimulated: body.isSimulated || false,
+        sessionId: body.sessionId as string,
+        timestamp: (body.timestamp as number) || Date.now(),
+        lat: body.lat as number,
+        lon: body.lon as number,
+        accuracy: (body.accuracy as number) || 10,
+        speed: body.speed as number | undefined,
+        heading: body.heading as number | undefined,
+        isSimulated: (body.isSimulated as boolean) || false,
       };
 
-      if (!sample.sessionId || !sample.lat || !sample.lon) {
-        return error("sessionId, lat, and lon are required");
+      if (!sample.sessionId || sample.lat === undefined || sample.lon === undefined) {
+        return error("sessionId, lat, and lon are required", 422);
+      }
+
+      if (!serverState.dbConnected) {
+        return json({ received: true, sample }, 201);
       }
 
       const processed = await processLocationSample(sample);
@@ -187,16 +279,17 @@ export async function handleRequest(req: Request): Promise<Response> {
     // ========================================================================
 
     if (path === "/route-plans" && method === "POST") {
-      const body = await req.json();
+      const body = await req.json() as Record<string, unknown>;
+
       const request: RoutePlanRequest = {
-        origin: body.origin,
-        destination: body.destination,
-        priority: body.priority || "fastest",
-        modes: body.modes || ["walk", "transit"],
+        origin: body.origin as RoutePlanRequest["origin"],
+        destination: body.destination as RoutePlanRequest["destination"],
+        priority: (body.priority as RoutePlanRequest["priority"]) || "fastest",
+        modes: (body.modes as RoutePlanRequest["modes"]) || ["walk", "transit"],
       };
 
       if (!request.origin || !request.destination) {
-        return error("origin and destination are required");
+        return error("origin and destination are required", 422);
       }
 
       const plan = await planRoute(request);
@@ -224,7 +317,7 @@ export async function handleRequest(req: Request): Promise<Response> {
       const lon = parseFloat(url.searchParams.get("lon") || "");
 
       if (isNaN(lat) || isNaN(lon)) {
-        return error("lat and lon are required");
+        return error("lat and lon are required", 422);
       }
 
       const result = await reverseGeocode(lat, lon);
@@ -246,23 +339,21 @@ export async function handleRequest(req: Request): Promise<Response> {
     // ========================================================================
 
     if (path === "/dashboard/overview" && method === "GET") {
-      const routes = await getAllRoutes();
-      const stops = await getAllStops();
       const vehicles = await getVirtualVehicles();
-      const sessions = await getActiveSessions();
 
       const overview = {
-        totalRoutes: routes.length,
+        totalRoutes: serverState.routeCount,
         activeRoutes: new Set(vehicles.map((v) => v.routeId)).size,
-        totalStops: stops.length,
+        totalStops: serverState.stopCount,
         activeVehicles: vehicles.length,
         totalPassengers: vehicles.reduce((sum, v) => sum + v.passengerCount, 0),
         avgSpeed:
           vehicles.length > 0
-            ? vehicles.reduce((sum, v) => sum + v.speed, 0) / vehicles.length
+            ? Math.round(vehicles.reduce((sum, v) => sum + v.speed, 0) / vehicles.length)
             : 0,
-        activeSessions: sessions.length,
-        systemHealth: "healthy",
+        database: serverState.dbConnected ? "connected" : "offline",
+        simulation: serverState.simulationRunning ? "running" : "stopped",
+        systemHealth: serverState.dbConnected ? "healthy" : "degraded",
         lastUpdateAt: new Date().toISOString(),
       };
 
@@ -271,13 +362,10 @@ export async function handleRequest(req: Request): Promise<Response> {
 
     if (path === "/dashboard/vehicles" && method === "GET") {
       const vehicles = await getVirtualVehicles();
-      const routes = await getAllRoutes();
-      const routeMap = new Map(routes.map((r) => [r.id, r]));
 
       const dashboardVehicles = vehicles.map((v) => ({
         vehicleId: v.id,
         routeId: v.routeId,
-        routeName: routeMap.get(v.routeId)?.name || v.routeId,
         progress: v.progress,
         speed: v.speed,
         passengerCount: v.passengerCount,
@@ -286,37 +374,11 @@ export async function handleRequest(req: Request): Promise<Response> {
         lastUpdate: v.lastUpdateAt,
       }));
 
-      return json({ vehicles: dashboardVehicles });
-    }
-
-    if (path === "/dashboard/stops" && method === "GET") {
-      const stops = await getAllStops();
-
-      const dashboardStops = await Promise.all(
-        stops.slice(0, 20).map(async (stop) => {
-          const eta = await calculateStopEta(stop.id);
-          return {
-            stopId: stop.id,
-            name: stop.name,
-            position: stop.coordinates,
-            waitingPassengers: 0, // Would come from real data
-            nextArrival: eta,
-            routeIds: stop.routeIds,
-          };
-        })
-      );
-
-      return json({ stops: dashboardStops });
-    }
-
-    if (path.match(/^\/dashboard\/routes\/[^/]+$/) && method === "GET") {
-      const routeId = path.split("/")[3];
-      const stats = await getRouteStatistics(routeId);
-      return json({ routeId, ...stats });
+      return json({ vehicles: dashboardVehicles, count: dashboardVehicles.length });
     }
 
     // ========================================================================
-    // Simulation Control (demo mode only)
+    // Simulation Control
     // ========================================================================
 
     if (path === "/simulation/status" && method === "GET") {
@@ -324,15 +386,25 @@ export async function handleRequest(req: Request): Promise<Response> {
       const vehicles = simulation.getVirtualVehicles();
 
       return json({
-        running: true, // Would track actual state
+        running: serverState.simulationRunning,
         vehicleCount: vehicles.length,
         totalPassengers: vehicles.reduce((sum, v) => sum + v.passengerCount, 0),
+        mode: process.env.MOBILITY_MODE || "demo",
       });
     }
 
     if (path === "/simulation/reset" && method === "POST") {
       const simulation = getSimulation();
       simulation.reset();
+
+      // Reload routes if available
+      if (serverState.dbConnected && serverState.routeCount > 0) {
+        const routes = await getAllRoutes();
+        simulation.loadRoutes(routes);
+        simulation.initializeVehicles();
+        simulation.start();
+      }
+
       return json({ success: true, message: "Simulation reset" });
     }
 
@@ -343,9 +415,7 @@ export async function handleRequest(req: Request): Promise<Response> {
     return error(`Not found: ${method} ${path}`, 404);
   } catch (err) {
     console.error("Request error:", err);
-    return error(
-      err instanceof Error ? err.message : "Internal server error",
-      500
-    );
+    const message = err instanceof Error ? err.message : "Internal server error";
+    return error(message, 500);
   }
 }

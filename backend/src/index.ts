@@ -3,12 +3,12 @@
 // Bun.serve with HTTP + WebSocket support
 // ============================================================================
 
-import { testConnection } from "./db/connection";
+import { testConnection, checkSchema, getTableCounts } from "./db/connection";
 import { getSimulation } from "./simulation/engine";
-import { getAllRoutes } from "./services/routes";
+import { getAllRoutes, getRouteCount, getStopCount } from "./services/routes";
+import { processLocationSample, syncVehiclesToDatabase } from "./services/mobility";
 import { handleRequest } from "./routes/handler";
 import { handleWebSocket, broadcastVehicleUpdate } from "./routes/websocket";
-import type { Route } from "./types";
 
 const PORT = parseInt(process.env.PORT || "3000");
 const HOST = process.env.HOST || "0.0.0.0";
@@ -22,61 +22,123 @@ console.log(`
 `);
 
 // ============================================================================
+// Server State
+// ============================================================================
+
+interface ServerState {
+  dbConnected: boolean;
+  schemaReady: boolean;
+  routeCount: number;
+  stopCount: number;
+  simulationRunning: boolean;
+}
+
+export const serverState: ServerState = {
+  dbConnected: false,
+  schemaReady: false,
+  routeCount: 0,
+  stopCount: 0,
+  simulationRunning: false,
+};
+
+// ============================================================================
 // Server Initialization
 // ============================================================================
 
 async function initializeServer() {
-  console.log("Initializing server...");
+  console.log("Initializing server...\n");
 
   // Test database connection
-  console.log("Testing database connection...");
-  const dbConnected = await testConnection();
+  console.log("1. Testing database connection...");
+  serverState.dbConnected = await testConnection();
 
-  if (!dbConnected) {
-    console.warn("⚠️  Database not available - running in demo-only mode");
+  if (!serverState.dbConnected) {
+    console.log("   ⚠️  Database not available - running in simulation-only mode");
   } else {
-    console.log("✓ Database connected");
+    console.log("   ✓ Database connected");
+
+    // Check schema
+    console.log("2. Checking database schema...");
+    const schema = await checkSchema();
+    serverState.schemaReady = schema.routes && schema.stops && schema.sessions && schema.vehicles;
+
+    if (serverState.schemaReady) {
+      console.log("   ✓ Schema ready");
+
+      // Get counts
+      const counts = await getTableCounts();
+      serverState.routeCount = counts.routes;
+      serverState.stopCount = counts.stops;
+      console.log(`   ✓ Routes: ${counts.routes}, Stops: ${counts.stops}`);
+    } else {
+      console.log("   ⚠️  Schema incomplete - run migrations first");
+      console.log(`      routes: ${schema.routes}, stops: ${schema.stops}`);
+    }
   }
 
   // Initialize simulation engine
   if (MOBILITY_MODE === "demo") {
-    console.log("Initializing simulation engine...");
+    console.log("3. Initializing simulation engine...");
 
-    try {
-      const simulation = getSimulation({
-        seed: parseInt(process.env.SIMULATION_SEED || "42"),
-        speedMultiplier: 1,
-        vehiclesPerRoute: 2,
-        gpsNoiseMeters: 8,
-      });
+    const simulation = getSimulation({
+      seed: parseInt(process.env.SIMULATION_SEED || "42"),
+      speedMultiplier: 1,
+      vehiclesPerRoute: 2,
+      gpsNoiseMeters: 8,
+    });
 
-      // Load routes from database if available
-      if (dbConnected) {
+    // Load routes if available
+    if (serverState.dbConnected && serverState.routeCount > 0) {
+      try {
         const routes = await getAllRoutes();
-        if (routes.length > 0) {
-          simulation.loadRoutes(routes);
-          simulation.initializeVehicles();
-          console.log(`✓ Loaded ${routes.length} routes into simulation`);
-        } else {
-          console.log("⚠️  No routes in database - run db:import-geojson");
+        simulation.loadRoutes(routes);
+        simulation.initializeVehicles();
+        console.log(`   ✓ Loaded ${routes.length} routes`);
+      } catch (error) {
+        console.log("   ⚠️  Failed to load routes from database");
+      }
+    } else {
+      console.log("   ⚠️  No routes available for simulation");
+    }
+
+    // Connect simulation to mobility processor
+    simulation.onLocationSamples(async (sample) => {
+      if (serverState.dbConnected && serverState.schemaReady) {
+        try {
+          await processLocationSample(sample);
+        } catch (error) {
+          // Silent fail for simulation samples
         }
       }
+    });
 
-      // Set up vehicle update broadcasting
-      simulation.onVehicleUpdates((vehicles) => {
-        broadcastVehicleUpdate(vehicles);
-      });
+    // Broadcast vehicle updates via WebSocket
+    simulation.onVehicleUpdates(async (vehicles) => {
+      broadcastVehicleUpdate(vehicles);
 
-      // Start simulation
-      simulation.start();
-      console.log("✓ Simulation engine started");
-    } catch (error) {
-      console.warn("⚠️  Simulation initialization failed:", error);
-    }
+      // Sync to database periodically (every 10 updates)
+      if (serverState.dbConnected && serverState.schemaReady) {
+        try {
+          await syncVehiclesToDatabase(vehicles);
+        } catch (error) {
+          // Silent fail
+        }
+      }
+    });
+
+    // Start simulation
+    simulation.start();
+    serverState.simulationRunning = true;
+    console.log("   ✓ Simulation started");
   }
 
-  console.log(`\nMode: ${MOBILITY_MODE.toUpperCase()}`);
-  console.log(`Server ready on http://${HOST}:${PORT}\n`);
+  console.log(`
+╔═══════════════════════════════════════════════════════════╗
+║  Server ready at http://${HOST}:${PORT}
+║  WebSocket at ws://${HOST}:${PORT}/ws/mobility
+║  Mode: ${MOBILITY_MODE.toUpperCase()}
+╚═══════════════════════════════════════════════════════════╝
+`);
 }
 
 // ============================================================================
@@ -100,7 +162,7 @@ const server = Bun.serve({
     }
 
     // Handle HTTP requests
-    return handleRequest(req);
+    return handleRequest(req, serverState);
   },
 
   websocket: handleWebSocket,
@@ -112,19 +174,25 @@ const server = Bun.serve({
 });
 
 // Initialize
-initializeServer().catch(console.error);
+initializeServer().catch((error) => {
+  console.error("Initialization failed:", error);
+});
 
 // Graceful shutdown
 process.on("SIGINT", () => {
   console.log("\nShutting down...");
-  getSimulation().stop();
+  try {
+    getSimulation().stop();
+  } catch {}
   server.stop();
   process.exit(0);
 });
 
 process.on("SIGTERM", () => {
   console.log("\nTerminating...");
-  getSimulation().stop();
+  try {
+    getSimulation().stop();
+  } catch {}
   server.stop();
   process.exit(0);
 });

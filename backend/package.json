@@ -1,16 +1,14 @@
 {
   "name": "morelia-conecta-backend",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Backend API for Morelia Conecta MaaS MVP",
   "type": "module",
   "scripts": {
     "dev": "bun run --watch src/index.ts",
     "start": "bun run src/index.ts",
-    "db:migrate": "bun run src/db/migrate.ts",
-    "db:seed": "bun run src/db/seed.ts",
-    "db:import-geojson": "bun run scripts/import-geojson.ts",
+    "bootstrap": "bun run scripts/bootstrap.ts",
     "simulate": "bun run src/simulation/runner.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "bun x tsc --noEmit"
   },
   "dependencies": {
     "postgres": "^3.4.4"
