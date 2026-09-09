@@ -40,13 +40,15 @@ export async function getDashboardStops() {
   const rows = await sql`
     SELECT
       s.id,
-      COALESCE(s.name, s.id) AS name,
+      COALESCE(NULLIF(TRIM(s.name), ''), 'Parada ' || LEFT(s.id, 8)) AS name,
       ST_X(s.location)::float AS lon,
       ST_Y(s.location)::float AS lat,
       COUNT(DISTINCT rs.route_id)::int AS route_count,
+      COALESCE(ARRAY_AGG(DISTINCT r.name) FILTER (WHERE r.name IS NOT NULL), ARRAY[]::text[]) AS route_names,
       COUNT(DISTINCT bs.id)::int AS active_sessions
     FROM stops s
     LEFT JOIN route_stops rs ON rs.stop_id = s.id
+    LEFT JOIN routes r ON r.id = rs.route_id
     LEFT JOIN LATERAL (
       SELECT bs.id
       FROM boarding_sessions bs
@@ -67,6 +69,7 @@ export async function getDashboardStops() {
       name: row.name,
       coordinates: { lat: Number(row.lat), lon: Number(row.lon) },
       routeCount: Number(row.route_count),
+      routeNames: row.route_names || [],
       activeSessions: Number(row.active_sessions),
       estimatedDemand: demand,
       confidence: Number(row.active_sessions) > 0 ? "Media" : "Baja",

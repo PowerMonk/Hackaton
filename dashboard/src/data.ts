@@ -2,7 +2,7 @@ export type View = 'overview' | 'live' | 'routes' | 'stops' | 'analytics' | 'qua
 export type Position = { lat: number; lon: number }
 export type Vehicle = { id: string; route: string; position: Position; speed: number; passengers: number; confidence: number; lastUpdate: string; progress?: number }
 export type Route = { id: string; name: string; color: string; geometry?: { type: 'LineString' | 'MultiLineString'; coordinates: number[][] | number[][][] }; units: number; avgSpeed: number; confidence: number; status: string }
-export type Stop = { id: string; name: string; coordinates: Position; routeIds: string[]; demand: number; confidence: string }
+export type Stop = { id: string; name: string; coordinates: Position; routeIds: string[]; routeNames: string[]; demand: number; confidence: string }
 export type DashboardData = { connected: boolean; overview: Record<string, unknown>; vehicles: Vehicle[]; routes: Route[]; stops: Stop[]; history: unknown[]; quality: Record<string, unknown>; alerts: Array<{ id: string; title: string; message: string; severity: string }> }
 
 export const demoRoutes: Route[] = [
@@ -40,11 +40,11 @@ function normalizeRoute(r: any): Route {
 }
 function normalizeStop(s: any): Stop {
   const p = s.coordinates || { lat: s.lat, lon: s.lon }
-  return { id: String(s.id ?? s.name), name: s.name ?? s.id, coordinates: { lat: num(p.lat), lon: num(p.lon ?? p.lng) }, routeIds: s.routeIds || [], demand: num(s.estimatedDemand ?? s.demand), confidence: s.confidence ?? 'Baja' }
+  return { id: String(s.id ?? s.name), name: s.name ?? `Parada ${String(s.id ?? '').slice(0, 8)}`, coordinates: { lat: num(p.lat), lon: num(p.lon ?? p.lng) }, routeIds: s.routeIds || [], routeNames: s.routeNames || [], demand: num(s.estimatedDemand ?? s.demand), confidence: s.confidence ?? 'Baja' }
 }
 
 export async function loadDashboardData(): Promise<DashboardData> {
-  const fallback: DashboardData = { connected: false, overview: { activeVehicles: demoVehicles.length, totalPassengers: 78, avgSpeed: 18, activeRoutes: demoRoutes.length, totalRoutes: demoRoutes.length, totalStops: 39 }, vehicles: demoVehicles, routes: demoRoutes, stops: ['Mercado Independencia', 'Las Américas', 'Héroes de Nocupétaro', 'Tres Puentes', 'Ciudad Universitaria', 'Xangari'].map((name, i) => ({ id: `demo-${i}`, name, coordinates: { lat: 19.7 + i * .004, lon: -101.19 + i * .006 }, routeIds: ['R12'], demand: [84, 72, 68, 55, 49, 43][i], confidence: 'Media' })), history: [], quality: { freshness: 91.6, accuracy: 89, coverage: 94 }, alerts: [] }
+  const fallback: DashboardData = { connected: false, overview: { activeVehicles: demoVehicles.length, totalPassengers: 78, avgSpeed: 18, activeRoutes: demoRoutes.length, totalRoutes: demoRoutes.length, totalStops: 39 }, vehicles: demoVehicles, routes: demoRoutes, stops: ['Mercado Independencia', 'Las Américas', 'Héroes de Nocupétaro', 'Tres Puentes', 'Ciudad Universitaria', 'Xangari'].map((name, i) => ({ id: `demo-${i}`, name, coordinates: { lat: 19.7 + i * .004, lon: -101.19 + i * .006 }, routeIds: ['R12'], routeNames: ['Centro · Xangari'], demand: [84, 72, 68, 55, 49, 43][i], confidence: 'Media' })), history: [], quality: { freshness: 91.6, accuracy: 89, coverage: 94 }, alerts: [] }
   const urls = ['/dashboard/overview', '/dashboard/vehicles', '/routes', '/stops', '/dashboard/history', '/dashboard/data-quality', '/dashboard/alerts']
   const responses = await Promise.all(urls.map(path => fetch(`${base()}${path}`, { signal: AbortSignal.timeout(2500) }).catch(() => null)))
   const json = await Promise.all(responses.map(async r => r?.ok ? r.json().catch(() => null) : null))
