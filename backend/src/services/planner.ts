@@ -137,8 +137,10 @@ export const DEFAULT_PLANNER_CONFIG: Readonly<PlannerConfig> = {
   walkingDistanceFactor: 1.25,
   transitSpeedKmh: 20,
   defaultTransitFare: 12,
-  nearbyStopRadiusMeters: 800,
-  maxNearbyStops: 5,
+  // 1000m gives ~13 min walk to a stop. Stops are ~400m apart (synthetic),
+  // but route ends and gaps push the nearest stop beyond 800m in places.
+  nearbyStopRadiusMeters: 1000,
+  maxNearbyStops: 6,
   maxPlans: 3,
   fallbackToWalking: true,
 };

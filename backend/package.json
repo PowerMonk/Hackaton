@@ -8,7 +8,8 @@
     "start": "bun run src/index.ts",
     "bootstrap": "bun run scripts/bootstrap.ts",
     "simulate": "bun run src/simulation/runner.ts",
-    "typecheck": "bun x tsc --noEmit"
+    "typecheck": "bun x tsc --noEmit",
+    "generate-stops": "bun run src/scripts/generate-stops.ts"
   },
   "dependencies": {
     "postgres": "^3.4.4"

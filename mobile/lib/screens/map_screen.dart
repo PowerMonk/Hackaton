@@ -842,12 +842,27 @@ class SelectableRouteCard extends StatelessWidget {
         ),
         child: Row(
           children: [
-            RouteBadge(route: route, compact: true),
+            RouteModeIcon(route: route, size: compact ? 52 : 58),
             const SizedBox(width: 13),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  if (route.displayCode != null &&
+                      route.displayCode!.isNotEmpty) ...[
+                    Text(
+                      route.displayCode!,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: dark ? Colors.white70 : AppColors.terracotta,
+                        fontSize: compact ? 11 : 12,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                  ],
                   Text(
                     route.name,
                     maxLines: 2,
@@ -859,14 +874,26 @@ class SelectableRouteCard extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 5),
-                  Text(
-                    '${route.mode} · ${route.frequency}',
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: dark ? Colors.white70 : AppColors.muted,
-                      fontSize: compact ? 13 : 14,
-                    ),
+                  Row(
+                    children: [
+                      Icon(
+                        RouteModeIcon.iconFor(route.mode),
+                        size: compact ? 13 : 14,
+                        color: dark ? Colors.white70 : AppColors.muted,
+                      ),
+                      const SizedBox(width: 4),
+                      Flexible(
+                        child: Text(
+                          '${route.mode} · ${route.frequency}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: dark ? Colors.white70 : AppColors.muted,
+                            fontSize: compact ? 13 : 14,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),

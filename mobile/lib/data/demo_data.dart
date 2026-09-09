@@ -5,6 +5,7 @@ import '../models/app_models.dart';
 const demoRoutes = <TransitRoute>[
   TransitRoute(
     id: 'R12',
+    displayCode: 'R12',
     name: 'Santa María — Centro',
     mode: 'Combi',
     frequency: 'Cada 6 min',
@@ -15,6 +16,7 @@ const demoRoutes = <TransitRoute>[
   ),
   TransitRoute(
     id: 'R07',
+    displayCode: 'R07',
     name: 'Villas — Catedral',
     mode: 'Micro',
     frequency: 'Cada 9 min',
@@ -25,6 +27,7 @@ const demoRoutes = <TransitRoute>[
   ),
   TransitRoute(
     id: 'R21',
+    displayCode: 'R21',
     name: 'Lomas — Mercado Independencia',
     mode: 'Camión',
     frequency: 'Cada 12 min',
@@ -34,6 +37,7 @@ const demoRoutes = <TransitRoute>[
   ),
   TransitRoute(
     id: 'R03',
+    displayCode: 'R03',
     name: 'Expropiación — Av. Universidad',
     mode: 'Combi',
     frequency: 'Sin datos en vivo',

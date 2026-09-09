@@ -67,6 +67,66 @@ class RouteBadge extends StatelessWidget {
   }
 }
 
+/// Mapea `route.mode` a un icono Material representativo del vehículo.
+///
+/// Usado en el home (selección de rutas) para diferenciar visualmente
+/// combi vs micro vs camión vs bus sin tener que leer el nombre.
+class RouteModeIcon extends StatelessWidget {
+  const RouteModeIcon({
+    required this.route,
+    this.size = 48,
+    super.key,
+  });
+
+  final TransitRoute route;
+  final double size;
+
+  /// Icono Material según el tipo de vehículo.
+  /// Combi → van/shuttle, Micro → bus, Camión → camión, Bus → bus grande.
+  static IconData iconFor(String mode) {
+    final normalized = mode.toLowerCase();
+    if (normalized.contains('camión') ||
+        normalized.contains('camion') ||
+        normalized.contains('truck')) {
+      return Icons.local_shipping;
+    }
+    if (normalized.contains('micro')) {
+      return Icons.directions_bus_filled;
+    }
+    if (normalized.contains('bus') && !normalized.contains('micro')) {
+      return Icons.directions_transit_filled;
+    }
+    // Combi (default) — airport_shuttle es la van/combi más representativa
+    return Icons.airport_shuttle;
+  }
+
+  /// Etiqueta legible del modo para tooltip/accessibility.
+  static String labelFor(String mode) {
+    return mode.isEmpty ? 'Transporte' : mode;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final iconData = iconFor(route.mode);
+    return Semantics(
+      label: 'Modo: ${labelFor(route.mode)}',
+      child: Container(
+        width: size,
+        height: size,
+        decoration: BoxDecoration(
+          color: route.color,
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Icon(
+          iconData,
+          color: Colors.white,
+          size: size * 0.56,
+        ),
+      ),
+    );
+  }
+}
+
 class StatusPill extends StatelessWidget {
   const StatusPill({
     required this.label,

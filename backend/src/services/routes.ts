@@ -138,7 +138,6 @@ export async function getAllStops(): Promise<Stop[]> {
     LEFT JOIN route_stops rs ON s.id = rs.stop_id
     GROUP BY s.id
     ORDER BY s.name NULLS LAST
-    LIMIT 1000
   `;
 
   return result.map((row) => ({

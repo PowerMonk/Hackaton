@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 
+import '../data/routes_repository.dart';
+import '../models/app_models.dart';
 import '../models/planner_models.dart';
 import '../theme/app_theme.dart';
 
@@ -25,12 +27,57 @@ class _RouteMapScreenState extends State<RouteMapScreen> {
   final _mapController = MapController();
   int? _selectedLegIndex;
 
+  /// Catálogo local de rutas (geometría real OSM). Se carga una sola vez.
+  /// Permite dibujar las polylíneas reales de cada `leg.transit` aunque el
+  /// backend solo envíe el tramo from→to.
+  Map<String, TransitRoute> _routesById = const {};
+  Map<String, TransitRoute> _routesByName = const {};
+
   @override
   void initState() {
     super.initState();
+    _loadRoutes();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _fitBounds();
     });
+  }
+
+  Future<void> _loadRoutes() async {
+    try {
+      final routes = await RoutesRepository.loadDemoRoutes();
+      if (!mounted) return;
+      final byId = <String, TransitRoute>{};
+      final byName = <String, TransitRoute>{};
+      for (final r in routes) {
+        byId[r.id] = r;
+        byName[r.name] = r;
+      }
+      setState(() {
+        _routesById = byId;
+        _routesByName = byName;
+      });
+      // Reajustar el mapa ahora que la geometría real está disponible.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _fitBounds();
+      });
+    } catch (_) {
+      // Si la carga falla, seguimos con el fallback de líneas rectas.
+    }
+  }
+
+  /// Busca la [TransitRoute] correspondiente a un leg de tránsito.
+  /// El backend puede reportar el id (`Coral 1`) o el nombre largo
+  /// (`Roja 1 Comercial Mexicana`); probamos ambos.
+  TransitRoute? _routeForLeg(RouteLeg leg) {
+    final candidates = <String>[
+      if (leg.routeId != null) leg.routeId!,
+      if (leg.routeName != null) leg.routeName!,
+    ];
+    for (final key in candidates) {
+      final hit = _routesById[key] ?? _routesByName[key];
+      if (hit != null) return hit;
+    }
+    return null;
   }
 
   void _fitBounds() {
@@ -43,6 +90,15 @@ class _RouteMapScreenState extends State<RouteMapScreen> {
       if (leg.geometry != null) {
         for (final coord in leg.geometry!) {
           allPoints.add(LatLng(coord[1], coord[0]));
+        }
+      }
+      // Geometría real (OSM local) si la ruta fue encontrada en el catálogo
+      if (leg.mode == 'transit') {
+        final route = _routeForLeg(leg);
+        if (route?.segments != null) {
+          for (final segment in route!.segments!) {
+            allPoints.addAll(segment);
+          }
         }
       }
     }
@@ -74,6 +130,28 @@ class _RouteMapScreenState extends State<RouteMapScreen> {
       'bicycle' => Icons.directions_bike,
       _ => Icons.circle,
     };
+  }
+
+  /// Convierte los `segments` de una [TransitRoute] en polylines para el mapa.
+  ///
+  /// Si la ruta fue encontrada en el catálogo local, dibujamos cada
+  /// LineString por separado con el color de la ruta y alpha bajo para que
+  /// se vea el trazado completo sin tapar los marcadores.
+  List<Polyline> _realRoutePolylines(RouteLeg leg) {
+    final route = _routeForLeg(leg);
+    final segments = route?.segments;
+    if (segments == null || segments.isEmpty) return const [];
+    final baseColor = route!.color;
+    return [
+      for (final segment in segments)
+        if (segment.length >= 2)
+          Polyline(
+            points: segment,
+            strokeWidth: 4.5,
+            color: baseColor.withValues(alpha: 0.55),
+            borderStrokeWidth: 0,
+          ),
+    ];
   }
 
   String _formatDistance(int meters) {
@@ -109,7 +187,18 @@ class _RouteMapScreenState extends State<RouteMapScreen> {
                 urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                 userAgentPackageName: 'com.moreliaconecta.app',
               ),
-              // Dibujar las rutas
+              // Capa base: geometría real (OSM) de las rutas de transporte.
+              // Se dibuja debajo y con alpha baja para no competir con los
+              // legs de la opción seleccionada.
+              PolylineLayer(
+                polylines: [
+                  for (final leg in widget.option.legs)
+                    if (leg.mode == 'transit')
+                      ..._realRoutePolylines(leg),
+                ],
+              ),
+              // Capa superior: los legs de la opción (walk recto, transit
+              // recto, o el tramo geometry que venga del backend).
               ...widget.option.legs.asMap().entries.map((entry) {
                 final index = entry.key;
                 final leg = entry.value;
@@ -133,7 +222,7 @@ class _RouteMapScreenState extends State<RouteMapScreen> {
                     Polyline(
                       points: points,
                       strokeWidth: isSelected ? 6 : 4,
-                      color: isSelected ? color : color.withValues(alpha: 0.7),
+                      color: isSelected ? color : color.withValues(alpha: 0.85),
                       borderStrokeWidth: isSelected ? 2 : 0,
                       borderColor: Colors.white,
                     ),
