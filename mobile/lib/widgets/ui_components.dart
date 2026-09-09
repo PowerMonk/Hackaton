@@ -37,8 +37,8 @@ class RouteBadge extends StatelessWidget {
     final fontSize = text.length > 8
         ? baseFontSize * 0.7
         : text.length > 5
-            ? baseFontSize * 0.85
-            : baseFontSize;
+        ? baseFontSize * 0.85
+        : baseFontSize;
 
     return Container(
       width: large ? 118 : (compact ? 70 : 114),
@@ -261,17 +261,6 @@ class AppBottomBar extends StatelessWidget {
                           fontWeight: selected
                               ? FontWeight.w700
                               : FontWeight.w500,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Container(
-                        width: 7,
-                        height: 7,
-                        decoration: BoxDecoration(
-                          color: selected
-                              ? AppColors.terracotta
-                              : Colors.transparent,
-                          shape: BoxShape.circle,
                         ),
                       ),
                     ],

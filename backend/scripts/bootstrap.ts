@@ -61,6 +61,8 @@ async function runMigrations(): Promise<boolean> {
       "001_extensions.sql",
       "002_schema.sql",
       "003_integrity_indexes.sql",
+      "004_performance.sql",
+      "005_proximity.sql",
     ];
 
     for (const file of files) {

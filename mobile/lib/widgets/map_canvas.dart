@@ -128,39 +128,6 @@ class DemoMap extends StatelessWidget {
     return [];
   }
 
-  /// Freshness label for map pill.
-  String get _freshnessLabel {
-    if (lastUpdateAt == null) return '';
-    final diff = DateTime.now().difference(lastUpdateAt!);
-    if (diff.inSeconds < 10) return 'hace ${diff.inSeconds}s';
-    if (diff.inSeconds < 60) return 'hace ${diff.inSeconds}s';
-    if (diff.inMinutes < 5) return 'hace ${diff.inMinutes}min';
-    return 'hace ${diff.inMinutes}min (stale)';
-  }
-
-  /// Build the main pill label based on current state.
-  String _buildMainPillLabel(List<List<LatLng>> segments) {
-    if (!showRoute) return 'Mapa general';
-
-    if (isLiveLocation) {
-      if (_hasRealVehicles) {
-        return 'GPS real · ${vehicles.length} unidades';
-      }
-      return 'GPS real';
-    }
-
-    if (showDemoLabel) return 'Modo demostración';
-
-    if (route.tieneGeometriaReal) {
-      if (_hasRealVehicles) {
-        return '${vehicles.length} unidades · WebSocket';
-      }
-      return 'OSM · ${segments.length} seg. · 1 unidad sim.';
-    }
-
-    return '1 unidad · simulación local';
-  }
-
   @override
   Widget build(BuildContext context) {
     final segments = _effectiveSegments;
@@ -246,30 +213,6 @@ class DemoMap extends StatelessWidget {
               ],
             ),
           ),
-          Positioned(
-            top: 16,
-            left: 16,
-            child: _MapPill(
-              label: _buildMainPillLabel(segments),
-              dark: showDemoLabel || !_hasRealVehicles,
-            ),
-          ),
-          // Show freshness info if enabled
-          if (showFreshnessInfo && lastUpdateAt != null)
-            Positioned(
-              top: 16,
-              right: 16,
-              child: _MapPill(label: _freshnessLabel, dark: false),
-            )
-          else if (showDemoLabel || (!_hasRealVehicles && showRoute))
-            Positioned(
-              top: 16,
-              right: 16,
-              child: _MapPill(
-                label: _hasRealVehicles ? 'En vivo' : 'Datos simulados',
-                dark: !_hasRealVehicles,
-              ),
-            ),
         ],
       ),
     );
@@ -284,34 +227,6 @@ class DemoMap extends StatelessWidget {
         height: 28,
         child: StopMarkerWidget(isInferred: isInferred),
       );
-}
-
-class _MapPill extends StatelessWidget {
-  const _MapPill({required this.label, this.dark = false});
-
-  final String label;
-  final bool dark;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-      decoration: BoxDecoration(
-        color: dark ? AppColors.ink : const Color(0xFFE1F4E8),
-        borderRadius: BorderRadius.circular(28),
-        border: dark ? null : Border.all(color: const Color(0xFF9ED5B6)),
-        boxShadow: const [BoxShadow(color: Color(0x22000000), blurRadius: 12)],
-      ),
-      child: Text(
-        label,
-        style: TextStyle(
-          color: dark ? Colors.white : AppColors.green,
-          fontSize: 14,
-          fontWeight: FontWeight.w800,
-        ),
-      ),
-    );
-  }
 }
 
 class _VehicleMarker extends StatelessWidget {

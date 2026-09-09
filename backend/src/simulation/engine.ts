@@ -346,6 +346,19 @@ export class SimulationEngine {
     this.initializeVehicles();
   }
 
+  /** Change replay speed without rebuilding the current scenario. */
+  setSpeedMultiplier(multiplier: 1 | 5 | 10): void {
+    this.config.speedMultiplier = multiplier;
+    if (this.running) {
+      if (this.timerId) clearTimeout(this.timerId);
+      this.scheduleTick();
+    }
+  }
+
+  getConfig(): SimulationConfig {
+    return { ...this.config };
+  }
+
   /** Get current virtual vehicles for API */
   getVirtualVehicles(): VirtualVehicle[] {
     const result: VirtualVehicle[] = [];
@@ -855,15 +868,30 @@ export class SimulationEngine {
 let simulationInstance: SimulationEngine | null = null;
 
 export function getSimulation(config?: Partial<SimulationConfig>): SimulationEngine {
-  if (!simulationInstance) {
-    simulationInstance = new SimulationEngine(config);
+    if (!simulationInstance) {
+      simulationInstance = new SimulationEngine(config);
+    }
+    return simulationInstance;
   }
-  return simulationInstance;
-}
 
 export function resetSimulation(): void {
-  if (simulationInstance) {
-    simulationInstance.stop();
-    simulationInstance = null;
+    if (simulationInstance) {
+      simulationInstance.stop();
+      simulationInstance = null;
+    }
   }
-}
+
+export function getSimulationConfig(): SimulationConfig | null {
+    if (!simulationInstance) return null;
+    return {
+      ...simulationInstance.getConfig(),
+    };
+  }
+
+export function setSimulationSpeedMultiplier(multiplier: 1 | 5 | 10): boolean {
+    if (simulationInstance) {
+      simulationInstance.setSpeedMultiplier(multiplier);
+      return true;
+    }
+    return false;
+  }

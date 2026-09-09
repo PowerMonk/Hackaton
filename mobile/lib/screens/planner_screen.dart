@@ -837,7 +837,10 @@ class _RecommendedPlan extends StatelessWidget {
               spacing: 12,
               children: [
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 8,
+                  ),
                   decoration: BoxDecoration(
                     color: AppColors.greenBright,
                     borderRadius: BorderRadius.circular(20),
@@ -895,20 +898,23 @@ class _RecommendedPlan extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 8),
-            const Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.touch_app, color: Colors.white54, size: 16),
-                SizedBox(width: 6),
-                Text(
-                  'Toca para ver en el mapa',
-                  style: TextStyle(
-                    color: Colors.white54,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: const [
+                  Icon(Icons.touch_app, color: Colors.white54, size: 16),
+                  SizedBox(width: 6),
+                  Text(
+                    'Toca para ver en el mapa',
+                    style: TextStyle(
+                      color: Colors.white54,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ],
         ),
@@ -980,20 +986,23 @@ class _AlternativePlan extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 8),
-            const Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.touch_app, color: AppColors.muted, size: 14),
-                SizedBox(width: 5),
-                Text(
-                  'Toca para ver en el mapa',
-                  style: TextStyle(
-                    color: AppColors.muted,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: const [
+                  Icon(Icons.touch_app, color: AppColors.muted, size: 14),
+                  SizedBox(width: 5),
+                  Text(
+                    'Toca para ver en el mapa',
+                    style: TextStyle(
+                      color: AppColors.muted,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ],
         ),

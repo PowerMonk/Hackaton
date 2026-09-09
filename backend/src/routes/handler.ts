@@ -27,11 +27,18 @@ import {
   type PlannerMode,
   type PlannerRequest,
 } from "../services/planner";
-import { getSimulation } from "../simulation/engine";
+import { getSimulation, getSimulationConfig, resetSimulation, setSimulationSpeedMultiplier } from "../simulation/engine";
 import { parseLocationSample } from "../services/location-validation";
 import { getDatabaseStats, cleanupOldData } from "../services/cleanup";
 import { sql } from "../db/connection";
 import type { LocationSample, RoutePlanRequest } from "../types";
+import {
+  getDashboardAlerts,
+  getDashboardHistory,
+  getDashboardQuality,
+  getDashboardRoutes,
+  getDashboardStops,
+} from "../services/dashboard";
 
 interface ServerState {
   dbConnected: boolean;
@@ -42,6 +49,13 @@ interface ServerState {
 }
 
 // CORS headers for Flutter app
+const dashboardSettings: Record<string, unknown> = {
+  refreshIntervalSeconds: 30,
+  simulationEnabled: true,
+  staleSignalSeconds: 90,
+  lowConfidenceThreshold: 70,
+};
+
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
@@ -511,6 +525,58 @@ export async function handleRequest(
       }));
 
       return json({ vehicles: dashboardVehicles, count: dashboardVehicles.length });
+    }
+
+    if (path === "/dashboard/routes" && method === "GET") {
+      if (!serverState.dbConnected) return json({ routes: [], count: 0, source: "offline" });
+      const routes = await getDashboardRoutes();
+      return json({ routes, count: routes.length, source: "database" });
+    }
+
+    if (path === "/dashboard/stops" && method === "GET") {
+      if (!serverState.dbConnected) return json({ stops: [], count: 0, source: "offline" });
+      const stops = await getDashboardStops();
+      return json({ stops, count: stops.length, source: "database" });
+    }
+
+    if (path === "/dashboard/history" && method === "GET") {
+      if (!serverState.dbConnected) return json({ points: [], source: "offline" });
+      const points = await getDashboardHistory(url.searchParams.get("routeId") || undefined);
+      return json({ points, source: "database" });
+    }
+
+    if (path === "/dashboard/alerts" && method === "GET") {
+      if (!serverState.dbConnected) return json({ alerts: [], source: "offline" });
+      return json({ alerts: await getDashboardAlerts(), source: "database" });
+    }
+
+    if (path === "/dashboard/data-quality" && method === "GET") {
+      if (!serverState.dbConnected) return json({ totalSamples: 0, freshness: 0, routes: [], source: "offline" });
+      return json({ ...(await getDashboardQuality()), source: "database" });
+    }
+
+    if (path === "/dashboard/settings" && method === "GET") {
+      return json({ settings: dashboardSettings, source: "server-memory" });
+    }
+
+    if (path === "/dashboard/settings" && method === "PUT") {
+      const body = await req.json() as Record<string, unknown>;
+      for (const key of Object.keys(dashboardSettings)) {
+        if (key in body) dashboardSettings[key] = body[key];
+      }
+      return json({ settings: dashboardSettings });
+    }
+
+    if (path === "/simulation/config" && method === "GET") {
+      return json({ config: getSimulationConfig(), mode: process.env.MOBILITY_MODE || "demo" });
+    }
+
+    if (path === "/simulation/speed" && method === "POST") {
+      const body = await req.json() as Record<string, unknown>;
+      const multiplier = Number(body.multiplier);
+      if (![1, 5, 10].includes(multiplier)) return error("multiplier must be 1, 5 or 10", 422);
+      const updated = setSimulationSpeedMultiplier(multiplier as 1 | 5 | 10);
+      return json({ success: updated, multiplier });
     }
 
     // ========================================================================

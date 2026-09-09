@@ -406,7 +406,9 @@ async function syncVehicleBatch(vehicles: VirtualVehicle[]): Promise<void> {
   const confidences: string[] = [];
   const lons: number[] = [];
   const lats: number[] = [];
-  const isSimulateds: boolean[] = [];
+  // Use integer flags so postgres does not infer a scalar boolean parameter
+  // when serializing the array passed to UNNEST.
+  const isSimulateds: number[] = [];
 
   for (const v of vehicles) {
     ids.push(v.id);
@@ -418,7 +420,7 @@ async function syncVehicleBatch(vehicles: VirtualVehicle[]): Promise<void> {
     confidences.push(v.confidence);
     lons.push(v.currentPosition.lon);
     lats.push(v.currentPosition.lat);
-    isSimulateds.push(v.isSimulated);
+    isSimulateds.push(v.isSimulated ? 1 : 0);
   }
 
   await sql`
@@ -437,7 +439,7 @@ async function syncVehicleBatch(vehicles: VirtualVehicle[]): Promise<void> {
       confidence::confidence_level,
       ST_SetSRID(ST_MakePoint(lon, lat), 4326),
       NOW(),
-      is_simulated
+       is_simulated_int = 1
     FROM UNNEST(
       ${ids}::text[],
       ${routeIds}::text[],
@@ -448,8 +450,8 @@ async function syncVehicleBatch(vehicles: VirtualVehicle[]): Promise<void> {
       ${confidences}::text[],
       ${lons}::float8[],
       ${lats}::float8[],
-      ${isSimulateds}::boolean[]
-    ) AS t(id, route_id, progress, speed, heading, passenger_count, confidence, lon, lat, is_simulated)
+       ${isSimulateds}::int[]
+     ) AS t(id, route_id, progress, speed, heading, passenger_count, confidence, lon, lat, is_simulated_int)
     ON CONFLICT (id) DO UPDATE SET
       progress = EXCLUDED.progress,
       speed = EXCLUDED.speed,

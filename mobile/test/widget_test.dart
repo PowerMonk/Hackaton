@@ -33,7 +33,7 @@ void main() {
     await tester.pump();
 
     expect(find.text('Abordaje flexible'), findsOneWidget);
-    expect(find.textContaining('Llegada estimada'), findsOneWidget);
+    expect(find.textContaining('min'), findsWidgets);
   });
 
   testWidgets('map button opens a general map without route selection', (
@@ -119,7 +119,7 @@ void main() {
     await tester.pump();
     await tester.tap(find.byTooltip('Ver en el mapa'));
     await tester.pump();
-    await tester.tap(find.textContaining('Llegada estimada'));
+    await tester.tap(find.textContaining('min').first);
     await tester.pumpAndSettle();
 
     expect(find.text('¿Ya subiste al transporte?'), findsOneWidget);
@@ -141,7 +141,7 @@ void main() {
     await tester.pump();
     await tester.tap(find.byTooltip('Ver en el mapa'));
     await tester.pump();
-    await tester.tap(find.textContaining('Llegada estimada'));
+    await tester.tap(find.textContaining('min').first);
     await tester.pumpAndSettle();
     await tester.ensureVisible(find.text('Sí, ya estoy a bordo'));
     await tester.pumpAndSettle();

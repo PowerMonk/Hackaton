@@ -1003,7 +1003,7 @@ class _FocusedRouteViewState extends State<FocusedRouteView> {
           ),
           Positioned(
             top: compact ? 82 : 94,
-            left: 16,
+            right: 16,
             child: Material(
               color: AppColors.ink,
               borderRadius: BorderRadius.circular(18),
@@ -1033,7 +1033,7 @@ class _FocusedRouteViewState extends State<FocusedRouteView> {
                       ),
                       const SizedBox(width: 9),
                       Text(
-                        'Llegada estimada $simEta',
+                        simEta,
                         style: TextStyle(
                           color: Colors.white,
                           fontSize: compact ? 13 : 14,
